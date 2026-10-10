@@ -189,7 +189,7 @@ Use section labels when present; otherwise fall back to `<reply quote="short exa
 POST   /conversations                         -> create
 GET    /conversations/{id}                    -> tree: threads + messages + anchors
 POST   /threads/{id}/messages                 -> send user message, streams assistant reply (SSE)
-POST   /messages/{id}/threads                 -> create side thread {quote, start, end, section?, first_question}
+POST   /messages/{id}/threads                 -> create side thread {quote, start, end, section?, context_mode?}; the first question is then sent via POST /threads/{id}/messages
 PATCH  /threads/{id}                          -> title, context_mode, status
 POST   /threads/{id}/summarize                -> returns proposed merge note
 POST   /threads/{id}/merge                    -> {note_text} approves + injects
@@ -273,6 +273,10 @@ _(Claude Code: append dated one-line entries here as you make non-obvious choice
 - 2026-10-10: Every assistant reply gets a `message_versions` v1 row on save; a missing version row falls back to `messages.content`.
 - 2026-10-10: `threads.model` NULL means inherit from the parent chain (resolved at request time).
 - 2026-10-10: Token counts for OpenAI-compatible providers are a ~4 chars/token estimate (no standard tokenize endpoint); the UI marks them with `~`.
+- 2026-10-10: Side threads are saved on their first send (like conversations); the create endpoint takes no `first_question`, so every turn streams through one endpoint.
+- 2026-10-10: Depth cap (3) is enforced by the API as well as the UI.
+- 2026-10-10: Anchor quotes are raw-markdown slices, so a selection across formatting includes its syntax (e.g. `bold** text`). Rendered text not found verbatim in the source (HTML entities) is unmapped: not selectable as an anchor, not highlightable.
+- 2026-10-10: Badge count = messages in the side thread. Esc closes the panel and discards unsent drafts.
 - 2026-10-10: Token budget is per model (`context_window` in config.yaml, matching the server's real allocation, e.g. OLLAMA_CONTEXT_LENGTH); global `token_budget` is the fallback. Meter warns at 80%, red when over.
 
 ## 15. Open questions for the owner

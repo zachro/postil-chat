@@ -38,6 +38,7 @@ export interface Thread {
   anchor_start: number | null
   anchor_end: number | null
   anchor_section: string | null
+  anchor_version: number | null
   context_mode: 'as_of_anchor' | 'as_of_now'
   status: 'open' | 'resolved' | 'merged'
   title: string | null
@@ -63,6 +64,24 @@ export const listConversations = () => request<ConversationSummary[]>('/conversa
 export const getConversation = (id: number) => request<Conversation>(`/conversations/${id}`)
 export const createConversation = () =>
   request<Conversation>('/conversations', { method: 'POST', body: '{}' })
+
+export type ContextMode = Thread['context_mode']
+
+export interface NewSideThread {
+  quote: string
+  start: number
+  end: number
+  section?: string | null
+  context_mode?: ContextMode
+}
+
+export const createSideThread = (messageId: number, body: NewSideThread) =>
+  request<Thread>(`/messages/${messageId}/threads`, { method: 'POST', body: JSON.stringify(body) })
+
+export const updateThread = (
+  threadId: number,
+  body: { title?: string; context_mode?: ContextMode },
+) => request<Thread>(`/threads/${threadId}`, { method: 'PATCH', body: JSON.stringify(body) })
 
 export interface SendHandlers {
   onUserMessage(message: Message): void

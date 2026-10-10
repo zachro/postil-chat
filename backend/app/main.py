@@ -24,9 +24,13 @@ from app.schemas import (
     ModelInfo,
     ModelsResponse,
     SendMessage,
+    SideThreadCreate,
+    ThreadOut,
+    ThreadUpdate,
 )
 
 DEFAULT_TITLE = "New conversation"
+MAX_SIDE_THREAD_DEPTH = 3  # main thread is depth 0
 
 
 def sse(event: str, data: Any) -> str:
@@ -61,6 +65,13 @@ def create_app(
             raise HTTPException(404, "thread not found")
         return thread
 
+    def thread_depth(thread: Thread) -> int:
+        depth = 0
+        while thread.parent_thread is not None:
+            thread = thread.parent_thread
+            depth += 1
+        return depth
+
     router = APIRouter(prefix="/api")
 
     @router.get("/models")
@@ -89,6 +100,59 @@ def create_app(
         if conversation is None:
             raise HTTPException(404, "conversation not found")
         return ConversationOut.model_validate(conversation)
+
+    @router.post("/messages/{message_id}/threads", status_code=201)
+    def create_side_thread(
+        message_id: int, body: SideThreadCreate, session: SessionDep
+    ) -> ThreadOut:
+        """Anchor a new side thread to a span of an assistant message.
+
+        The first question is sent afterwards via POST /threads/{id}/messages,
+        so it streams like any other turn.
+        """
+        message = session.get(Message, message_id)
+        if message is None:
+            raise HTTPException(404, "message not found")
+        if message.role != "assistant":
+            raise HTTPException(422, "side threads anchor to assistant messages")
+        if not (body.start < body.end <= len(message.content)):
+            raise HTTPException(422, "anchor offsets are out of range")
+        if message.content[body.start : body.end] != body.quote:
+            raise HTTPException(422, "quote does not match the message at those offsets")
+        parent = message.thread
+        if thread_depth(parent) >= MAX_SIDE_THREAD_DEPTH:
+            raise HTTPException(422, f"side threads nest at most {MAX_SIDE_THREAD_DEPTH} deep")
+
+        version = session.scalar(
+            select(func.max(MessageVersion.version)).where(MessageVersion.message_id == message_id)
+        )
+        thread = Thread(
+            conversation_id=parent.conversation_id,
+            kind="side",
+            parent_thread_id=parent.id,
+            anchor_message_id=message_id,
+            anchor_quote=body.quote,
+            anchor_start=body.start,
+            anchor_end=body.end,
+            anchor_section=body.section,
+            anchor_version=version or 1,
+            context_mode=body.context_mode,
+        )
+        session.add(thread)
+        session.commit()
+        return ThreadOut.model_validate(thread)
+
+    @router.patch("/threads/{thread_id}")
+    def update_thread(thread_id: int, body: ThreadUpdate, session: SessionDep) -> ThreadOut:
+        thread = get_thread(session, thread_id)
+        if body.context_mode is not None:
+            if thread.kind == "main":
+                raise HTTPException(422, "the main thread has no context mode")
+            thread.context_mode = body.context_mode
+        if body.title is not None:
+            thread.title = body.title
+        session.commit()
+        return ThreadOut.model_validate(thread)
 
     @router.post("/threads/{thread_id}/messages")
     def send_message(thread_id: int, body: SendMessage, session: SessionDep) -> StreamingResponse:
