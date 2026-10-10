@@ -131,7 +131,7 @@ Rules:
 4. Side-thread messages are **never** included unless merged as a note.
 
 **Side thread**
-1. System prompt (same base plus a short side-thread addendum: "answer narrowly about the focus span; the user may merge your conclusion back later").
+1. System prompt, byte-identical to the main thread's (for caching). The side-thread instruction ("answer narrowly about the focus span; the user may merge your conclusion back later") goes in the focus turn instead, as a `<side_thread>` block before `<focus>`.
 2. The parent thread's context up to and including `anchor_message_id`. This is recursive: for a nested side thread, it is the parent side thread's own assembled context (grandparent prefix, focus marker, turns) truncated at the anchor, not just the parent's raw messages. Concretely: parent-thread messages from the start up to and including `anchor_message_id` (the version in `anchor_version` if `context_mode='as_of_anchor'`, latest otherwise). If `context_mode='as_of_now'`, also include later parent messages.
 3. A focus marker as the first side-thread user turn:
    ```
@@ -267,6 +267,12 @@ _(Claude Code: append dated one-line entries here as you make non-obvious choice
 - 2026-10-10: `oxlint` instead of ESLint (current Vite template default, much faster).
 - 2026-10-10: Conversations are created on first send, not on "New chat", so empty conversations do not pile up.
 - 2026-10-10: Thinking models: only `content` deltas are shown; `reasoning` is dropped. Dev config disables thinking (`reasoning_effort: none`) for CPU speed.
+- 2026-10-10: Side-thread instruction lives in the focus turn, not the system prompt, so main and side threads share one cacheable prefix.
+- 2026-10-10: Stored text wrapped in our tags (quotes, notes) has closing tags for those tags neutralized (`</focus` -> `<\/focus`); no other escaping, so quotes stay byte-exact.
+- 2026-10-10: Merge-note label is `§n` if the side thread has a section, else the first 40 chars of its quote.
+- 2026-10-10: Every assistant reply gets a `message_versions` v1 row on save; a missing version row falls back to `messages.content`.
+- 2026-10-10: `threads.model` NULL means inherit from the parent chain (resolved at request time).
+- 2026-10-10: Token counts for OpenAI-compatible providers are a ~4 chars/token estimate (no standard tokenize endpoint); the UI marks them with `~`.
 
 ## 15. Open questions for the owner
 
