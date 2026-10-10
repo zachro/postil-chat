@@ -244,7 +244,7 @@ Work one milestone at a time; each should leave the app runnable.
 ## 13. Conventions for Claude Code
 
 - Keep `app/context.py` pure and small; every behavior change there needs a test first.
-- Type hints everywhere (Python and TS); `ruff` + `mypy` (backend), `eslint` + `tsc --noEmit` (frontend).
+- Type hints everywhere (Python and TS); `ruff` + `mypy` (backend), `oxlint` + `tsc --noEmit` (frontend). Run all with `make lint`.
 - **Never commit to `main`** (branch protection requires PRs and linear history; no force pushes). Work on a branch per milestone step and open a PR.
 - Small commits per milestone step; commit messages in imperative mood.
 - Prefer boring, readable code over cleverness. No new dependency without a one-line justification in the PR/commit.
@@ -263,6 +263,10 @@ _(Claude Code: append dated one-line entries here as you make non-obvious choice
 - 2026-10-10: Multi-anchor replies are a main-thread message built from a GitHub-review-style pending tray.
 - 2026-10-10: `react-markdown` for rendering (source positions for anchor mapping); fetch-based SSE parser.
 - 2026-10-10: Summarizer defaults to the thread's model; side threads inherit the parent's model; Docker Compose after M5, bound to 127.0.0.1.
+- 2026-10-10: `threads.model` column (config model id) added for the per-thread model picker; the model sent with a message is remembered on the thread.
+- 2026-10-10: `oxlint` instead of ESLint (current Vite template default, much faster).
+- 2026-10-10: Conversations are created on first send, not on "New chat", so empty conversations do not pile up.
+- 2026-10-10: Thinking models: only `content` deltas are shown; `reasoning` is dropped. Dev config disables thinking (`reasoning_effort: none`) for CPU speed.
 
 ## 15. Open questions for the owner
 
