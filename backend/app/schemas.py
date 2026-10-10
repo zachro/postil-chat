@@ -69,3 +69,18 @@ class ConversationOut(ConversationSummary):
 class SendMessage(BaseModel):
     content: str = Field(min_length=1)
     model: str | None = None  # config model id; defaults to the thread's model
+
+
+class ContextMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ContextPreview(BaseModel):
+    thread_id: int
+    model: str
+    messages: list[ContextMessage]
+    token_count: int
+    token_count_estimated: bool
+    token_budget: int
+    over_budget: bool

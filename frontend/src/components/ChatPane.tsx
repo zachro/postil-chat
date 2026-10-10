@@ -1,6 +1,14 @@
-import { useLayoutEffect, useRef, useState } from 'react'
-import { sendMessage, type Message, type ModelInfo, type Thread } from '../lib/api'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import {
+  getContextPreview,
+  sendMessage,
+  type ContextPreview,
+  type Message,
+  type ModelInfo,
+  type Thread,
+} from '../lib/api'
 import { Composer } from './Composer'
+import { ContextMeter } from './ContextMeter'
 import { MessageView } from './MessageView'
 
 interface Props {
@@ -21,6 +29,21 @@ export function ChatPane(props: Props) {
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
+  const [preview, setPreview] = useState<ContextPreview | null>(null)
+  const threadId = thread?.id
+  const idle = draft === null
+
+  // Refresh the token count whenever the thread settles on new content.
+  useEffect(() => {
+    if (threadId === undefined || !idle) return
+    let current = true
+    getContextPreview(threadId)
+      .then((p) => current && setPreview(p))
+      .catch(() => current && setPreview(null))
+    return () => {
+      current = false
+    }
+  }, [threadId, idle, messages.length])
 
   useLayoutEffect(() => {
     const el = scrollRef.current
@@ -107,6 +130,7 @@ export function ChatPane(props: Props) {
           streaming={draft !== null}
           onSend={send}
           onStop={() => abortRef.current?.abort()}
+          status={<ContextMeter preview={preview} />}
         />
       </div>
     </main>

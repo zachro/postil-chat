@@ -1,8 +1,8 @@
 from app.config import ModelConfig
-from app.llm.base import ChatMessage, LLMProvider
+from app.llm.base import ChatMessage, LLMProvider, TokenCount, estimate_tokens
 from app.llm.openai_compat import OpenAICompatProvider
 
-__all__ = ["ChatMessage", "LLMProvider", "get_provider"]
+__all__ = ["ChatMessage", "LLMProvider", "TokenCount", "estimate_tokens", "get_provider"]
 
 
 def get_provider(config: ModelConfig) -> LLMProvider:

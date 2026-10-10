@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from 'react'
+import { useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { ModelInfo } from '../lib/api'
 
 interface Props {
@@ -8,9 +8,10 @@ interface Props {
   streaming: boolean
   onSend(content: string): void
   onStop(): void
+  status?: ReactNode // shown between the model picker and the send button
 }
 
-export function Composer({ models, model, onModelChange, streaming, onSend, onStop }: Props) {
+export function Composer({ models, model, onModelChange, streaming, onSend, onStop, status }: Props) {
   const [text, setText] = useState('')
 
   function send() {
@@ -45,6 +46,7 @@ export function Composer({ models, model, onModelChange, streaming, onSend, onSt
             </option>
           ))}
         </select>
+        <span className="composer-status">{status}</span>
         {streaming ? (
           <button onClick={onStop}>Stop</button>
         ) : (

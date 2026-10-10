@@ -97,3 +97,16 @@ export async function sendMessage(
     }
   }
 }
+
+export interface ContextPreview {
+  thread_id: number
+  model: string
+  messages: { role: 'system' | 'user' | 'assistant'; content: string }[]
+  token_count: number
+  token_count_estimated: boolean
+  token_budget: number
+  over_budget: boolean
+}
+
+export const getContextPreview = (threadId: number) =>
+  request<ContextPreview>(`/threads/${threadId}/context-preview`)

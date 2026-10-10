@@ -1,9 +1,4 @@
-"""ORM models. See CLAUDE.md section 4 for the data model.
-
-M1 only uses the main thread, but the thread columns for side threads exist
-already so M2 does not need a migration. message_versions and merge_notes are
-new tables and arrive with the milestones that use them.
-"""
+"""ORM models. See CLAUDE.md section 4 for the data model."""
 
 from datetime import UTC, datetime
 
@@ -49,6 +44,8 @@ class Thread(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     conversation: Mapped[Conversation] = relationship(back_populates="threads")
+    parent_thread: Mapped["Thread | None"] = relationship(remote_side=[id])
+    anchor_message: Mapped["Message | None"] = relationship(foreign_keys=[anchor_message_id])
     messages: Mapped[list["Message"]] = relationship(
         back_populates="thread",
         order_by="Message.position",
@@ -71,3 +68,35 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     thread: Mapped[Thread] = relationship(back_populates="messages", foreign_keys=[thread_id])
+
+
+class MessageVersion(Base):
+    """Content history for revise-in-place. v1 mirrors the original assistant reply."""
+
+    __tablename__ = "message_versions"
+    __table_args__ = (UniqueConstraint("message_id", "version"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("messages.id"))
+    version: Mapped[int]
+    content: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class MergeNote(Base):
+    """A resolved side thread compressed into a short note for its target thread."""
+
+    __tablename__ = "merge_notes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    thread_id: Mapped[int] = mapped_column(ForeignKey("threads.id"))  # the merged side thread
+    target_thread_id: Mapped[int] = mapped_column(ForeignKey("threads.id"))
+    note_text: Mapped[str] = mapped_column(Text)
+    approved: Mapped[bool] = mapped_column(default=False)
+    # Target thread's last message at merge time (None if it was empty). The note
+    # is prepended to the first user turn after it, never to an earlier turn.
+    inject_after_message_id: Mapped[int | None] = mapped_column(ForeignKey("messages.id"))
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    thread: Mapped[Thread] = relationship(foreign_keys=[thread_id])

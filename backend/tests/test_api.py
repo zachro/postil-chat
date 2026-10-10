@@ -2,7 +2,10 @@ import json
 from typing import Any
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
+from app.models import MessageVersion, Thread
 from app.prompts import SYSTEM_PROMPT
 from tests.conftest import FakeProvider
 
@@ -131,3 +134,83 @@ def test_timestamps_are_utc(client: TestClient) -> None:
     saved = client.get(f"/api/conversations/{conversation['id']}").json()
     assert saved["created_at"].endswith("Z")
     assert saved["threads"][0]["messages"][0]["created_at"].endswith("Z")
+
+
+def test_assistant_replies_get_a_v1_version(client: TestClient, session: Session) -> None:
+    conversation = new_conversation(client)
+    events = send(client, conversation["threads"][0]["id"], "Hi")
+    reply_id = events[-1][1]["message"]["id"]
+
+    versions = session.scalars(select(MessageVersion).where(MessageVersion.message_id == reply_id))
+    assert [(v.version, v.content) for v in versions] == [(1, "Hello, world")]
+
+
+def test_context_preview_shows_assembled_messages_and_tokens(client: TestClient) -> None:
+    thread_id = new_conversation(client)["threads"][0]["id"]
+    send(client, thread_id, "Hi")
+
+    preview = client.get(f"/api/threads/{thread_id}/context-preview").json()
+
+    assert preview["model"] == "fake"
+    assert [(m["role"], m["content"]) for m in preview["messages"]] == [
+        ("system", SYSTEM_PROMPT),
+        ("user", "Hi"),
+        ("assistant", "Hello, world"),
+    ]
+    # FakeProvider counts words.
+    assert preview["token_count"] == len(SYSTEM_PROMPT.split()) + 3
+    assert preview["token_count_estimated"] is False
+    assert preview["token_budget"] == 30
+    assert preview["over_budget"] is False
+
+
+def test_context_preview_flags_over_budget(client: TestClient) -> None:
+    thread_id = new_conversation(client)["threads"][0]["id"]
+    send(client, thread_id, "word " * 40)
+
+    assert client.get(f"/api/threads/{thread_id}/context-preview").json()["over_budget"] is True
+
+
+def test_context_preview_for_side_thread_inherits_parent_model(
+    client: TestClient, session: Session
+) -> None:
+    conversation = new_conversation(client)
+    main_id = conversation["threads"][0]["id"]
+    events = send(client, main_id, "Hi", model="other")
+    anchor_id = events[-1][1]["message"]["id"]
+    side = Thread(
+        conversation_id=conversation["id"],
+        kind="side",
+        parent_thread_id=main_id,
+        anchor_message_id=anchor_id,
+        anchor_quote="world",
+        anchor_version=1,
+    )
+    session.add(side)
+    session.commit()
+
+    preview = client.get(f"/api/threads/{side.id}/context-preview").json()
+
+    assert preview["model"] == "other"
+    assert [m["role"] for m in preview["messages"]] == ["system", "user", "assistant", "user"]
+    assert '<focus message="msg_' in preview["messages"][-1]["content"]
+
+
+def test_context_preview_errors(client: TestClient, session: Session) -> None:
+    assert client.get("/api/threads/999/context-preview").status_code == 404
+
+    conversation = new_conversation(client)
+    side = Thread(conversation_id=conversation["id"], kind="side")  # no parent/anchor
+    session.add(side)
+    session.commit()
+    assert client.get(f"/api/threads/{side.id}/context-preview").status_code == 409
+
+
+def test_context_preview_budget_is_the_models_context_window(client: TestClient) -> None:
+    thread_id = new_conversation(client)["threads"][0]["id"]
+    send(client, thread_id, "word " * 40, model="other")
+
+    preview = client.get(f"/api/threads/{thread_id}/context-preview").json()
+
+    assert preview["token_budget"] == 1000
+    assert preview["over_budget"] is False

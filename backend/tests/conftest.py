@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.config import ModelConfig, Settings, parse_settings
 from app.db import init_db, make_engine
-from app.llm.base import ChatMessage
+from app.llm.base import ChatMessage, TokenCount
 from app.main import create_app
 
 
@@ -26,6 +26,9 @@ class FakeProvider:
                 raise RuntimeError("model went away")
             yield delta
 
+    async def count_tokens(self, messages: Sequence[ChatMessage]) -> TokenCount:
+        return TokenCount(sum(len(m.content.split()) for m in messages), estimated=False)
+
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
@@ -33,9 +36,16 @@ def settings(tmp_path: Path) -> Settings:
         {
             "database_path": "test.db",
             "default_model": "fake",
+            "token_budget": 30,
             "models": [
                 {"id": "fake", "label": "Fake", "provider": "fake", "model": "fake-1"},
-                {"id": "other", "label": "Other", "provider": "fake", "model": "fake-2"},
+                {
+                    "id": "other",
+                    "label": "Other",
+                    "provider": "fake",
+                    "model": "fake-2",
+                    "context_window": 1000,
+                },
             ],
         },
         root=tmp_path,

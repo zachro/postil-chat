@@ -10,7 +10,8 @@ default_model: qwen3-local
 # Model used to summarize side threads into merge notes; null = the thread's own model.
 summarizer_model: null
 
-# Warn when an assembled context exceeds this many tokens.
+# Warn when an assembled context exceeds this many tokens, for models that
+# don't set `context_window` below.
 token_budget: 8000
 
 models:
@@ -20,6 +21,10 @@ models:
     model: qwen3:1.7b
     base_url: http://localhost:11434/v1
     api_key_env: null
+    # Must match the context Ollama actually allocates (OLLAMA_CONTEXT_LENGTH in
+    # the ollama service; check with `ollama ps`). Ollama's default is 4096 and it
+    # silently drops the start of longer prompts.
+    context_window: 16384
     # Extra request params passed through to the provider. Disabling thinking
     # keeps small local models responsive on CPU.
     params:

@@ -12,9 +12,11 @@ from sqlalchemy.orm import Session
 from app.config import ModelConfig, Settings, get_settings
 from app.context import assemble_context
 from app.db import init_db, make_engine
-from app.llm import LLMProvider, get_provider
-from app.models import Conversation, Message, Thread
+from app.llm import LLMProvider, estimate_tokens, get_provider
+from app.models import Conversation, Message, MessageVersion, Thread
 from app.schemas import (
+    ContextMessage,
+    ContextPreview,
     ConversationCreate,
     ConversationOut,
     ConversationSummary,
@@ -43,6 +45,22 @@ def create_app(
             yield session
 
     SessionDep = Annotated[Session, Depends(get_session)]
+
+    def thread_model(thread: Thread) -> str:
+        """The thread's model, inherited from its parent chain if unset."""
+        current: Thread | None = thread
+        while current is not None:
+            if current.model in settings.models:
+                return current.model
+            current = current.parent_thread
+        return settings.default_model
+
+    def get_thread(session: Session, thread_id: int) -> Thread:
+        thread = session.get(Thread, thread_id)
+        if thread is None:
+            raise HTTPException(404, "thread not found")
+        return thread
+
     router = APIRouter(prefix="/api")
 
     @router.get("/models")
@@ -80,10 +98,8 @@ def create_app(
         `done` ({message}) or `error` ({error, message}). The assistant message
         is saved even if generation fails, with `error` set and partial content.
         """
-        thread = session.get(Thread, thread_id)
-        if thread is None:
-            raise HTTPException(404, "thread not found")
-        model_id = body.model or thread.model or settings.default_model
+        thread = get_thread(session, thread_id)
+        model_id = body.model or thread_model(thread)
         if model_id not in settings.models:
             raise HTTPException(422, f"unknown model {model_id!r}")
         thread.model = model_id
@@ -128,6 +144,8 @@ def create_app(
                         error=error,
                     )
                     s.add(reply)
+                    s.flush()
+                    s.add(MessageVersion(message_id=reply.id, version=1, content=reply.content))
                     s.commit()
                     reply_out = MessageOut.model_validate(reply).model_dump(mode="json")
             if error is None:
@@ -139,6 +157,29 @@ def create_app(
             events(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @router.get("/threads/{thread_id}/context-preview")
+    async def context_preview(thread_id: int, session: SessionDep) -> ContextPreview:
+        """Exactly what the next model call for this thread would send, plus its size."""
+        thread = get_thread(session, thread_id)
+        try:
+            context = assemble_context(session, thread_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        model_id = thread_model(thread)
+        try:
+            tokens = await provider_for(settings.models[model_id]).count_tokens(context)
+        except Exception:
+            tokens = estimate_tokens(context)  # e.g. missing API key; still show a size
+        return ContextPreview(
+            thread_id=thread_id,
+            model=model_id,
+            messages=[ContextMessage(role=m.role, content=m.content) for m in context],
+            token_count=tokens.count,
+            token_count_estimated=tokens.estimated,
+            token_budget=settings.budget_for(model_id),
+            over_budget=tokens.count > settings.budget_for(model_id),
         )
 
     app = FastAPI(title="Postil")

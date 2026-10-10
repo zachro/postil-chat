@@ -7,7 +7,7 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
 from app.config import ModelConfig
-from app.llm.base import ChatMessage
+from app.llm.base import ChatMessage, TokenCount, estimate_tokens
 
 
 class OpenAICompatProvider:
@@ -32,6 +32,10 @@ class OpenAICompatProvider:
             # not part of the reply, so only `content` is forwarded.
             if chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
+
+    async def count_tokens(self, messages: Sequence[ChatMessage]) -> TokenCount:
+        # OpenAI-compatible servers have no standard tokenize endpoint.
+        return estimate_tokens(messages)
 
 
 def _to_param(message: ChatMessage) -> ChatCompletionMessageParam:
