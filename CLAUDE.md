@@ -1,6 +1,6 @@
 # CLAUDE.md: Postil (Inline-Threaded LLM Chat)
 
-**Name:** Postil (an old word for a marginal note). Canonical domain: `postil.chat`; `trypostil.com` redirects to it. Use `postil-chat` for the repo and for package names where the bare `postil` is taken. The bare `postil` name is **taken on npm and GitHub** (free on PyPI), so do not assume it is available: use `@postil/web` or `postil-chat` on npm, and `postil-chat` for the GitHub repo or org.
+**Name:** Postil (an old word for a marginal note). Domain `postil.chat`. Use `postil-chat` for package names (bare `postil` is taken on npm).
 
 A model-agnostic, self-hostable chat UI where you can reply **inline** to a specific part of an AI response (like margin comments in Google Docs) without pushing the original response out of view. Side threads can be **merged back** into the main conversation as a tiny note, so the main thread's context stays small.
 
@@ -31,11 +31,13 @@ LLM APIs are **stateless**. The context window is rebuilt from scratch on every 
 
 ## 3. Stack (defaults; deviate only with reason)
 
-- **Backend:** Python 3.12, FastAPI, Uvicorn, SQLite via SQLAlchemy 2.x (or plain `sqlite3` if simpler), Pydantic v2.
-- **LLM layer:** LiteLLM behind a thin `LLMProvider` interface in `backend/llm/`. Do not call vendor SDKs from route handlers.
-- **Streaming:** Server-Sent Events from backend to frontend.
-- **Frontend:** React + TypeScript + Vite. Plain CSS or Tailwind. Selection handling via the DOM `Selection`/`Range` APIs.
-- **Dev model:** Ollama (e.g. `llama3.1` or `qwen2.5`) at `http://localhost:11434` so development costs nothing. Anthropic/OpenAI keys come from env vars.
+- **Backend:** Python 3.12 (managed by `uv`), FastAPI, Uvicorn, SQLite via SQLAlchemy 2.x, Pydantic v2. Schema via `create_all`; no Alembic until the schema settles.
+- **LLM layer:** a thin `LLMProvider` protocol in `app/llm/` with two adapters: `openai_compat.py` (OpenAI SDK; covers Ollama, OpenAI, OpenRouter, vLLM, LM Studio) and `anthropic.py` (Anthropic SDK; direct control of `cache_control`). No LiteLLM. Do not call vendor SDKs outside `app/llm/`.
+- **Streaming:** Server-Sent Events from backend to frontend. Since the stream starts from a POST, `lib/sse.ts` parses a `fetch` response body (not `EventSource`). If a stream fails midway, persist the partial assistant message with an error flag.
+- **Frontend:** React + TypeScript + Vite, npm. Plain CSS. Markdown via `react-markdown` (remark), because mdast nodes carry source positions, which `lib/anchors.ts` needs to map DOM selections back to raw-markdown offsets. Selection handling via the DOM `Selection`/`Range` APIs. Vite proxies `/api` to the backend (no CORS).
+- **Dev model:** native Ollama at `http://localhost:11434` so development costs nothing; model name lives in config (a small current model; the dev machine is CPU-only). Anthropic/OpenAI keys come from env vars.
+- **Dev commands:** top-level `Makefile` (`make dev`, `make test`, `make lint`).
+- **Networking:** no auth in the MVP, so the server binds to `127.0.0.1` by default, including in Docker Compose.
 - **Tests:** pytest for backend (heavy coverage on context assembly), Vitest for frontend utilities (anchor/offset logic).
 - **Config:** `.env` plus `config.yaml` (default model, summarizer model, provider keys, token budgets). Never commit secrets.
 
@@ -51,7 +53,7 @@ backend/
   app/merge.py           # summarize_thread(), merge-note flow
   app/revise.py          # revise-in-place flow
   app/llm/base.py        # LLMProvider protocol
-  app/llm/litellm_provider.py
+  app/llm/openai_compat.py, app/llm/anthropic.py
   tests/
 frontend/
   src/
@@ -65,7 +67,7 @@ CLAUDE.md
 
 ## 4. Data model
 
-Messages form a **tree**. A **thread** is a path of messages. The "main thread" is the root thread; side threads hang off an anchor in a message.
+Threads form a **tree**; each thread is a **linear** list of messages ordered by `position`. The "main thread" is the root thread; side threads hang off an anchor in a message. There is no branching inside a thread in the MVP (no regenerate/edit-and-resend forks); the only branching is via side threads.
 
 ```
 conversations(id, title, created_at)
@@ -85,9 +87,11 @@ threads(
 )
 
 messages(
-  id, thread_id, parent_id,
+  id, thread_id, position,       -- position: 0-based order within the thread
   role            -- 'user' | 'assistant'
-  content, model, token_count, created_at
+  content, model, token_count,
+  error           NULL            -- set if generation failed; content holds the partial reply
+  created_at
 )
 
 message_versions(          -- for revise-in-place; v1 mirrors original content
@@ -118,7 +122,7 @@ Rules:
 **Main thread**
 1. System prompt (section 6).
 2. Main-path messages in order.
-3. Approved merge notes whose `target_thread_id` is this thread, injected as a short block prepended to the next user turn after `inject_after_message_id`:
+3. Approved merge notes whose `target_thread_id` is this thread, injected as a short block prepended to the next user turn after `inject_after_message_id`. On merge, `inject_after_message_id` is set to the target thread's **last message at merge time**, so a note only ever attaches to a *new* user turn and never rewrites past turns (which would break the cached prefix):
    ```
    <resolved_side_threads>
    - [re §2] User runs Postgres 16; prefer approach B.
@@ -128,7 +132,7 @@ Rules:
 
 **Side thread**
 1. System prompt (same base plus a short side-thread addendum: "answer narrowly about the focus span; the user may merge your conclusion back later").
-2. Parent-thread messages from the start up to and including `anchor_message_id` (the version in `anchor_version` if `context_mode='as_of_anchor'`, latest otherwise). If `context_mode='as_of_now'`, also include later parent messages.
+2. The parent thread's context up to and including `anchor_message_id`. This is recursive: for a nested side thread, it is the parent side thread's own assembled context (grandparent prefix, focus marker, turns) truncated at the anchor, not just the parent's raw messages. Concretely: parent-thread messages from the start up to and including `anchor_message_id` (the version in `anchor_version` if `context_mode='as_of_anchor'`, latest otherwise). If `context_mode='as_of_now'`, also include later parent messages.
 3. A focus marker as the first side-thread user turn:
    ```
    <focus message="msg_12" section="§2">
@@ -139,16 +143,16 @@ Rules:
 4. Side-thread turns.
 5. Excluded: sibling side threads, parent messages after the anchor (unless `as_of_now`).
 
-**Inline replies to several parts at once** (multi-anchor reply in one send):
+**Multi-anchor reply** (comments on several parts of one response, sent at once). This is a **main-thread** user turn, not a side thread. Like starting a review on GitHub: the user highlights step 2 and types a comment, highlights step 4 and types another, and the UI collects them in a pending tray; "Send" submits the whole batch as one user message encoded as:
 ```xml
 <inline_replies to="msg_12">
   <reply anchor="§2">Why not use a migration here?</reply>
   <reply anchor="§4">Does this work with Ollama's API too?</reply>
 </inline_replies>
 ```
-Use section labels when present; otherwise fall back to `<reply quote="short exact span">`. The original message is already in context, so anchors are pointers, not copies.
+Use section labels when present; otherwise fall back to `<reply quote="short exact span">`. The original message is already in context, so anchors are pointers, not copies. Optional free text the user adds to the batch goes after the block. Store the structured anchors alongside the message so the UI can render each comment against its span.
 
-**Budgeting:** compute tokens per assembled context (LiteLLM `token_counter`), expose it in the UI per thread, and warn when over a configurable budget. Do not silently truncate in the MVP; surface it.
+**Budgeting:** compute tokens per assembled context (each provider adapter exposes `count_tokens`; an estimate is fine for OpenAI-compatible/Ollama), expose it in the UI per thread, and warn when over a configurable budget. Do not silently truncate in the MVP; surface it.
 
 **Prompt-cache friendliness:** keep the shared prefix (system + parent history through the anchor) byte-identical across sibling side threads and across turns. Put volatile content (focus marker, merge notes, new turns) at the end. For Anthropic, set `cache_control` breakpoints at the end of the stable prefix. Ollama/llama.cpp reuse the KV cache for identical prefixes automatically, so just keep prefixes stable.
 
@@ -156,7 +160,7 @@ Use section labels when present; otherwise fall back to `<reply quote="short exa
 
 ## 6. System prompt requirements
 
-- Ask the model to **label long, multi-part responses with section markers** (`§1`, `§2`, ...) at the start of each logical section/step, so anchors can be a couple of tokens. Short answers need no labels.
+- Ask the model to **label long, multi-part responses with section markers** (`§1`, `§2`, ...) at the start of each logical section/step, so anchors can be a couple of tokens. Short answers need no labels. Labels are an optimization only: small local models will emit them inconsistently, so nothing may depend on them. Quote-based anchors must always work alone.
 - Keep it short, provider-neutral, and stored in one file (`app/prompts.py`) so it is easy to tune.
 - The frontend should render `§n` markers as small clickable gutter labels (hide the raw text or style it subtly).
 
@@ -165,7 +169,7 @@ Use section labels when present; otherwise fall back to `<reply quote="short exa
 ## 7. Merge-back flow (`app/merge.py`)
 
 1. User clicks "Resolve" on a side thread.
-2. Backend calls the **summarizer model** (config; default a cheap/small model) with the side thread and the focus span, asking for a 1-3 line note capturing decisions, constraints, and corrections, nothing else.
+2. Backend calls the **summarizer model** (config; defaults to the thread's own model) with the side thread and the focus span, asking for a 1-3 line note capturing decisions, constraints, and corrections, nothing else.
 3. UI shows the note in an editable dialog. **The user must approve or edit before it is injected.** Summaries can drop the one detail that mattered.
 4. On approval, store `merge_notes` row, set thread `status='merged'`, and the note appears in main-thread context per section 5.
 5. "Resolve without merging" is allowed (`status='resolved'`, nothing injected).
@@ -202,6 +206,7 @@ GET    /models                                -> configured providers/models
 
 - **Layout:** main chat in the center; side threads open in a right-hand panel; anchored spans in the main message are highlighted with a small badge showing the reply count. Clicking a highlight opens its thread. Multiple open threads are tabs in the panel.
 - **Creating a thread:** select text in an assistant message, a small "Reply inline" button appears next to the selection, and clicking opens the side panel with the focus span quoted at the top.
+- **Multi-anchor reply (M6):** next to "Reply inline", an "Add comment" action adds the span + typed comment to a pending tray above the main composer; the tray lists pending comments (editable/removable) and sends them as one main-thread message (section 5).
 - **Original response stays put:** adding side-thread messages never scrolls or reflows the main chat.
 - **Per-thread controls:** model picker, context mode toggle (as-of-anchor / as-of-now), token count, Resolve / Merge.
 - **Detached anchors:** shown in the panel with the stored quote and a "detached" badge.
@@ -212,11 +217,11 @@ GET    /models                                -> configured providers/models
 
 ## 11. Milestones
 
-1. **M1, Skeleton:** FastAPI + SQLite + LiteLLM; linear chat against Ollama with SSE streaming; React UI renders the main thread.
-2. **M2, Tree + context assembly:** schema above; `assemble_context` with unit tests for main/side/as_of modes; `/context-preview`.
+1. **M1, Skeleton:** FastAPI + SQLite + OpenAI-compatible adapter; linear chat against Ollama with SSE streaming; React UI renders the main thread. Create the `conversations`/`threads`/`messages` tables now (M1 chat is just the main thread) to avoid a migration.
+2. **M2, Tree + context assembly:** remaining schema; `assemble_context` with unit tests for main/side/as_of modes; `/context-preview`.
 3. **M3, Inline threads:** selection -> anchor -> side panel; highlights with badges; side-thread chat working end to end.
 4. **M4, Merge-back:** summarize, edit/approve dialog, injection into main context; verify via context-preview that token count drops vs. pasting the full thread.
-5. **M5, Providers + caching:** Claude and OpenAI via LiteLLM; Anthropic cache breakpoints; confirm cache hits across sibling threads.
+5. **M5, Providers + caching:** Anthropic adapter; OpenAI via the OpenAI-compatible adapter; Anthropic cache breakpoints; confirm cache hits across sibling threads.
 6. **M6, Section labels + multi-anchor replies:** system prompt, gutter labels, `<inline_replies>` encoding.
 7. **M7, Revise-in-place + versions + re-anchoring.**
 8. **M8, Polish:** export conversation tree to Markdown/JSON, search, settings UI.
@@ -240,6 +245,7 @@ Work one milestone at a time; each should leave the app runnable.
 
 - Keep `app/context.py` pure and small; every behavior change there needs a test first.
 - Type hints everywhere (Python and TS); `ruff` + `mypy` (backend), `eslint` + `tsc --noEmit` (frontend).
+- **Never commit to `main`** (branch protection requires PRs and linear history; no force pushes). Work on a branch per milestone step and open a PR.
 - Small commits per milestone step; commit messages in imperative mood.
 - Prefer boring, readable code over cleverness. No new dependency without a one-line justification in the PR/commit.
 - Do not call vendor SDKs directly outside `app/llm/`.
@@ -250,8 +256,14 @@ Work one milestone at a time; each should leave the app runnable.
 
 _(Claude Code: append dated one-line entries here as you make non-obvious choices.)_
 
+- 2026-10-10: Two provider adapters (OpenAI-compatible + Anthropic) instead of LiteLLM: smaller dependency surface, direct `cache_control`.
+- 2026-10-10: Threads are linear (`position`, no `parent_id`); branching only via side threads.
+- 2026-10-10: Nested side threads inherit the parent's *assembled* context up to the anchor.
+- 2026-10-10: Merge notes attach after the target thread's last message at merge time, never into past turns.
+- 2026-10-10: Multi-anchor replies are a main-thread message built from a GitHub-review-style pending tray.
+- 2026-10-10: `react-markdown` for rendering (source positions for anchor mapping); fetch-based SSE parser.
+- 2026-10-10: Summarizer defaults to the thread's model; side threads inherit the parent's model; Docker Compose after M5, bound to 127.0.0.1.
+
 ## 15. Open questions for the owner
 
-- Default summarizer model (cheap hosted vs. local small model).
-- Whether side threads should inherit the parent thread's model by default (assumed: yes).
-- Whether to ship as a Docker Compose app (assumed: yes, after M5).
+_(none currently)_
