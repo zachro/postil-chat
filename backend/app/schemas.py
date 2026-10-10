@@ -1,7 +1,7 @@
 """Pydantic request/response models."""
 
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
@@ -55,6 +55,7 @@ class ThreadOut(ORMModel):
     anchor_start: int | None
     anchor_end: int | None
     anchor_section: str | None
+    anchor_version: int | None
     context_mode: str
     status: str
     title: str | None
@@ -64,6 +65,24 @@ class ThreadOut(ORMModel):
 
 class ConversationOut(ConversationSummary):
     threads: list[ThreadOut]
+
+
+ContextMode = Literal["as_of_anchor", "as_of_now"]
+
+
+class SideThreadCreate(BaseModel):
+    """An anchor into the message's raw markdown: quote == content[start:end]."""
+
+    quote: str = Field(min_length=1)
+    start: int = Field(ge=0)
+    end: int
+    section: str | None = None
+    context_mode: ContextMode = "as_of_anchor"
+
+
+class ThreadUpdate(BaseModel):
+    title: str | None = None
+    context_mode: ContextMode | None = None
 
 
 class SendMessage(BaseModel):
