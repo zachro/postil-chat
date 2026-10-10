@@ -1,0 +1,26 @@
+# Postil configuration. No secrets here: API keys are read from the env vars
+# named by `api_key_env` (see .env.example).
+
+# SQLite file, relative to the repo root.
+database_path: data/postil.db
+
+# Model used for new conversations (an `id` from `models` below).
+default_model: qwen3-local
+
+# Model used to summarize side threads into merge notes; null = the thread's own model.
+summarizer_model: null
+
+# Warn when an assembled context exceeds this many tokens.
+token_budget: 8000
+
+models:
+  - id: qwen3-local
+    label: Qwen3 1.7B (Ollama)
+    provider: openai_compat
+    model: qwen3:1.7b
+    base_url: http://localhost:11434/v1
+    api_key_env: null
+    # Extra request params passed through to the provider. Disabling thinking
+    # keeps small local models responsive on CPU.
+    params:
+      reasoning_effort: none
