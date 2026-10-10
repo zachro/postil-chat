@@ -204,3 +204,13 @@ def test_context_preview_errors(client: TestClient, session: Session) -> None:
     session.add(side)
     session.commit()
     assert client.get(f"/api/threads/{side.id}/context-preview").status_code == 409
+
+
+def test_context_preview_budget_is_the_models_context_window(client: TestClient) -> None:
+    thread_id = new_conversation(client)["threads"][0]["id"]
+    send(client, thread_id, "word " * 40, model="other")
+
+    preview = client.get(f"/api/threads/{thread_id}/context-preview").json()
+
+    assert preview["token_budget"] == 1000
+    assert preview["over_budget"] is False

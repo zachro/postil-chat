@@ -273,6 +273,7 @@ _(Claude Code: append dated one-line entries here as you make non-obvious choice
 - 2026-10-10: Every assistant reply gets a `message_versions` v1 row on save; a missing version row falls back to `messages.content`.
 - 2026-10-10: `threads.model` NULL means inherit from the parent chain (resolved at request time).
 - 2026-10-10: Token counts for OpenAI-compatible providers are a ~4 chars/token estimate (no standard tokenize endpoint); the UI marks them with `~`.
+- 2026-10-10: Token budget is per model (`context_window` in config.yaml, matching the server's real allocation, e.g. OLLAMA_CONTEXT_LENGTH); global `token_budget` is the fallback. Meter warns at 80%, red when over.
 
 ## 15. Open questions for the owner
 

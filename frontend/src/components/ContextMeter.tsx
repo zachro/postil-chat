@@ -2,6 +2,7 @@ import { useRef } from 'react'
 import type { ContextPreview } from '../lib/api'
 
 const fmt = new Intl.NumberFormat()
+const NEAR_BUDGET = 0.8 // warn before the model's context window is full
 
 /** Token count for a thread's assembled context; click to see exactly what is sent. */
 export function ContextMeter({ preview }: { preview: ContextPreview | null }) {
@@ -9,12 +10,21 @@ export function ContextMeter({ preview }: { preview: ContextPreview | null }) {
   if (!preview) return null
 
   const approx = preview.token_count_estimated ? '~' : ''
+  const level = preview.over_budget
+    ? ' over'
+    : preview.token_count >= NEAR_BUDGET * preview.token_budget
+      ? ' near'
+      : ''
   return (
     <>
       <button
-        className={`context-meter${preview.over_budget ? ' over' : ''}`}
+        className={`context-meter${level}`}
         onClick={() => dialogRef.current?.showModal()}
-        title={preview.over_budget ? 'Context is over the token budget' : 'Show assembled context'}
+        title={
+          preview.over_budget
+            ? 'Over the token budget: the provider may truncate or reject this context'
+            : 'Show assembled context'
+        }
       >
         {approx}
         {fmt.format(preview.token_count)} / {fmt.format(preview.token_budget)} tokens

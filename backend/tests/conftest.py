@@ -39,7 +39,13 @@ def settings(tmp_path: Path) -> Settings:
             "token_budget": 30,
             "models": [
                 {"id": "fake", "label": "Fake", "provider": "fake", "model": "fake-1"},
-                {"id": "other", "label": "Other", "provider": "fake", "model": "fake-2"},
+                {
+                    "id": "other",
+                    "label": "Other",
+                    "provider": "fake",
+                    "model": "fake-2",
+                    "context_window": 1000,
+                },
             ],
         },
         root=tmp_path,

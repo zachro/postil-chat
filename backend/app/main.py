@@ -178,8 +178,8 @@ def create_app(
             messages=[ContextMessage(role=m.role, content=m.content) for m in context],
             token_count=tokens.count,
             token_count_estimated=tokens.estimated,
-            token_budget=settings.token_budget,
-            over_budget=tokens.count > settings.token_budget,
+            token_budget=settings.budget_for(model_id),
+            over_budget=tokens.count > settings.budget_for(model_id),
         )
 
     app = FastAPI(title="Postil")

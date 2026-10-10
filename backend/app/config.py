@@ -19,6 +19,9 @@ class ModelConfig:
     model: str
     base_url: str | None = None
     api_key_env: str | None = None
+    # Tokens the server actually gives the model (for Ollama, its num_ctx /
+    # OLLAMA_CONTEXT_LENGTH, not the model's maximum). Prompts past it are truncated.
+    context_window: int | None = None
     params: dict[str, Any] = field(default_factory=dict)
 
 
@@ -28,7 +31,10 @@ class Settings:
     default_model: str
     models: dict[str, ModelConfig]
     summarizer_model: str | None = None
-    token_budget: int = 8000
+    token_budget: int = 8000  # fallback for models without a context_window
+
+    def budget_for(self, model_id: str) -> int:
+        return self.models[model_id].context_window or self.token_budget
 
 
 def parse_settings(raw: dict[str, Any], root: Path = REPO_ROOT) -> Settings:

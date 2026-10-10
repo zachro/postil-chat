@@ -8,6 +8,7 @@
   --accent: #3b5bdb;
   --accent-fg: #ffffff;
   --error: #c92a2a;
+  --warn: #b35c00;
   --code-bg: #f1f1ef;
 
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -28,6 +29,7 @@
     --accent: #748ffc;
     --accent-fg: #111111;
     --error: #ff8787;
+    --warn: #ffa94d;
     --code-bg: #26262a;
   }
 }
@@ -255,6 +257,10 @@ button.primary {
 
 .context-meter:hover {
   color: var(--fg);
+}
+
+.context-meter.near {
+  color: var(--warn);
 }
 
 .context-meter.over {
