@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.config import ModelConfig, Settings, parse_settings
 from app.db import init_db, make_engine
-from app.llm.base import ChatMessage, TokenCount
+from app.llm.base import ChatMessage, TokenCount, Usage
 from app.main import create_app
 
 
@@ -19,12 +19,17 @@ class FakeProvider:
         self.fail_after: int | None = None
         self.requests: list[list[ChatMessage]] = []
 
-    async def stream_chat(self, messages: Sequence[ChatMessage]) -> AsyncIterator[str]:
+    async def stream_chat(
+        self, messages: Sequence[ChatMessage], usage: Usage | None = None
+    ) -> AsyncIterator[str]:
         self.requests.append(list(messages))
         for i, delta in enumerate(self.deltas):
             if self.fail_after == i:
                 raise RuntimeError("model went away")
             yield delta
+        if usage is not None:
+            usage.input_tokens, usage.output_tokens = 10, len(self.deltas)
+            usage.cache_read_tokens, usage.cache_write_tokens = 7, 3
 
     async def count_tokens(self, messages: Sequence[ChatMessage]) -> TokenCount:
         return TokenCount(sum(len(m.content.split()) for m in messages), estimated=False)

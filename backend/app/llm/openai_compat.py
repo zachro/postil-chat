@@ -7,7 +7,7 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
 from app.config import ModelConfig
-from app.llm.base import ChatMessage, TokenCount, estimate_tokens
+from app.llm.base import ChatMessage, TokenCount, Usage, estimate_tokens
 
 
 class OpenAICompatProvider:
@@ -20,11 +20,16 @@ class OpenAICompatProvider:
         self._client = AsyncOpenAI(base_url=config.base_url, api_key=api_key)
         self._config = config
 
-    async def stream_chat(self, messages: Sequence[ChatMessage]) -> AsyncIterator[str]:
+    async def stream_chat(
+        self, messages: Sequence[ChatMessage], usage: Usage | None = None
+    ) -> AsyncIterator[str]:
+        # Prompt caching here is automatic (OpenAI caches long prefixes; Ollama
+        # reuses its KV cache), so ChatMessage.cache_breakpoint is not needed.
         stream = await self._client.chat.completions.create(
             model=self._config.model,
             messages=[_to_param(m) for m in messages],
             stream=True,
+            stream_options={"include_usage": True},
             extra_body=self._config.params,
         )
         async for chunk in stream:
@@ -32,6 +37,12 @@ class OpenAICompatProvider:
             # not part of the reply, so only `content` is forwarded.
             if chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
+            if chunk.usage and usage is not None:  # the last chunk, if the server reports it
+                details = chunk.usage.prompt_tokens_details
+                cached = (details.cached_tokens or 0) if details else 0
+                usage.input_tokens = chunk.usage.prompt_tokens - cached
+                usage.cache_read_tokens = cached
+                usage.output_tokens = chunk.usage.completion_tokens
 
     async def count_tokens(self, messages: Sequence[ChatMessage]) -> TokenCount:
         # OpenAI-compatible servers have no standard tokenize endpoint.

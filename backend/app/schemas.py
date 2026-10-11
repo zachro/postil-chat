@@ -18,6 +18,8 @@ class ORMModel(BaseModel):
 class ModelInfo(BaseModel):
     id: str
     label: str
+    available: bool  # False when its API key env var is unset
+    missing_env: str | None = None
 
 
 class ModelsResponse(BaseModel):
@@ -42,6 +44,7 @@ class MessageOut(ORMModel):
     role: str
     content: str
     model: str | None
+    token_count: int | None  # output tokens of an assistant reply, if the provider reported them
     error: str | None
     created_at: UTCDatetime
 
@@ -114,6 +117,7 @@ class SendMessage(BaseModel):
 class ContextMessage(BaseModel):
     role: str
     content: str
+    cache_breakpoint: bool = False  # end of a prefix shared with other threads
 
 
 class ContextPreview(BaseModel):

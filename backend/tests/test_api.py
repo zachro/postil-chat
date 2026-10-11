@@ -1,10 +1,14 @@
 import json
+from dataclasses import replace
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import ModelConfig, Settings
+from app.main import create_app
 from app.models import MessageVersion, Thread
 from app.prompts import SYSTEM_PROMPT
 from tests.conftest import FakeProvider
@@ -32,10 +36,50 @@ def send(client: TestClient, thread_id: int, content: str, **extra: Any) -> list
     return parse_sse(response.text)
 
 
+def test_done_event_reports_usage_and_saves_output_tokens(client: TestClient) -> None:
+    conversation = new_conversation(client)
+
+    events = send(client, conversation["threads"][0]["id"], "Hi")
+
+    name, data = events[-1]
+    assert name == "done"
+    assert data["usage"] == {
+        "input_tokens": 10,
+        "output_tokens": 2,
+        "cache_read_tokens": 7,
+        "cache_write_tokens": 3,
+    }
+    saved = client.get(f"/api/conversations/{conversation['id']}").json()
+    assert saved["threads"][0]["messages"][1]["token_count"] == 2
+
+
 def test_models_lists_configured_models(client: TestClient) -> None:
     data = client.get("/api/models").json()
     assert data["default_model"] == "fake"
     assert [m["id"] for m in data["models"]] == ["fake", "other"]
+
+
+def test_models_without_their_api_key_are_unavailable(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    keyed = ModelConfig(
+        id="keyed", label="Keyed", provider="fake", model="k", api_key_env="POSTIL_TEST_KEY"
+    )
+    with_key = replace(settings, models={**settings.models, "keyed": keyed})
+    monkeypatch.delenv("POSTIL_TEST_KEY", raising=False)
+    with TestClient(create_app(with_key)) as c:
+        models = {m["id"]: m for m in c.get("/api/models").json()["models"]}
+    assert models["fake"]["available"] is True
+    assert models["keyed"] == {
+        "id": "keyed",
+        "label": "Keyed",
+        "available": False,
+        "missing_env": "POSTIL_TEST_KEY",
+    }
+
+    monkeypatch.setenv("POSTIL_TEST_KEY", "x")
+    with TestClient(create_app(with_key)) as c:
+        assert c.get("/api/models").json()["models"][-1]["available"] is True
 
 
 def test_new_conversation_has_one_empty_main_thread(client: TestClient) -> None:

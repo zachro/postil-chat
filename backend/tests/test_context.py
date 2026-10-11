@@ -517,3 +517,39 @@ def test_summary_context_needs_a_side_thread_with_messages(tree: Tree, session: 
         assemble_summary_context(session, main.id)
     with pytest.raises(ValueError):
         assemble_summary_context(session, empty.id)
+
+
+# --- Cache breakpoints ---------------------------------------------------------
+
+
+def breakpoints(context: list[ChatMessage]) -> list[str]:
+    return [m.content for m in context if m.cache_breakpoint]
+
+
+def test_side_thread_marks_the_end_of_the_inherited_prefix(tree: Tree, session: Session) -> None:
+    main = tree.main()
+    tree.msg(main, "user", "q1")
+    a1 = tree.msg(main, "assistant", "a1")
+    tree.msg(main, "user", "q2")
+    tree.msg(main, "assistant", "a2")
+    side = tree.side(main, a1, quote="a1")
+    tree.msg(side, "user", "sq")
+    tree.msg(side, "assistant", "sa")
+    later = tree.side(main, a1, quote="a1", mode="as_of_now")
+
+    assert breakpoints(assemble_context(session, main.id)) == []
+    assert breakpoints(assemble_context(session, side.id)) == ["a1"]
+    assert breakpoints(assemble_context(session, later.id)) == ["a2"]
+
+
+def test_nested_side_thread_marks_every_inherited_prefix(tree: Tree, session: Session) -> None:
+    main = tree.main()
+    tree.msg(main, "user", "q1")
+    a1 = tree.msg(main, "assistant", "a1")
+    side = tree.side(main, a1, quote="a1")
+    tree.msg(side, "user", "sq1")
+    sa1 = tree.msg(side, "assistant", "sa1")
+    nested = tree.side(side, sa1, quote="sa1")
+    tree.msg(nested, "user", "nq")
+
+    assert breakpoints(assemble_context(session, nested.id)) == ["a1", "sa1"]

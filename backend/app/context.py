@@ -14,7 +14,7 @@ focus span and the side thread's own transcript, not the parent history.
 """
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -83,6 +83,9 @@ def _turns(session: Session, thread: Thread) -> list[_Turn]:
             content = _version_content(session, anchor.id, thread.anchor_version)
             if content is not None:
                 prefix[anchor_index] = _Turn(anchor.id, ChatMessage("assistant", content))
+    # Sibling threads and this thread's later turns all repeat the prefix exactly.
+    last = prefix[-1]
+    prefix[-1] = _Turn(last.message_id, replace(last.message, cache_breakpoint=True))
 
     focus = _focus_block(thread, anchor.id)
     if own and own[0].message.role == "user":
