@@ -29,6 +29,15 @@ export interface Message {
   created_at: string
 }
 
+export interface MergeNote {
+  id: number
+  thread_id: number // the merged side thread
+  target_thread_id: number
+  note_text: string
+  inject_after_message_id: number | null // joins the first user turn after this message
+  created_at: string
+}
+
 export interface Thread {
   id: number
   kind: 'main' | 'side'
@@ -44,6 +53,7 @@ export interface Thread {
   title: string | null
   model: string | null
   messages: Message[]
+  merge_note: MergeNote | null
 }
 
 export interface Conversation extends ConversationSummary {
@@ -80,8 +90,19 @@ export const createSideThread = (messageId: number, body: NewSideThread) =>
 
 export const updateThread = (
   threadId: number,
-  body: { title?: string; context_mode?: ContextMode },
+  body: { title?: string; context_mode?: ContextMode; status?: 'open' | 'resolved' },
 ) => request<Thread>(`/threads/${threadId}`, { method: 'PATCH', body: JSON.stringify(body) })
+
+/** Ask the summarizer model for a proposed merge note. Nothing is stored. */
+export const summarizeThread = (threadId: number) =>
+  request<{ note_text: string; model: string }>(`/threads/${threadId}/summarize`, { method: 'POST' })
+
+/** Approve a note: injects it into the parent thread's context and marks the thread merged. */
+export const mergeThread = (threadId: number, noteText: string) =>
+  request<Thread>(`/threads/${threadId}/merge`, {
+    method: 'POST',
+    body: JSON.stringify({ note_text: noteText }),
+  })
 
 export interface SendHandlers {
   onUserMessage(message: Message): void

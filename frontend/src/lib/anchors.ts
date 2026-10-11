@@ -17,12 +17,16 @@ export interface SourceAnchor {
   quote: string
 }
 
-/** A source span to highlight. threadId null marks a draft thread (no badge yet). */
+/**
+ * A source span to highlight. threadId null marks a draft thread (no badge yet);
+ * closed marks a resolved or merged thread (drawn muted).
+ */
 export interface Highlight {
   start: number
   end: number
   threadId: number | null
   count: number
+  closed?: boolean
 }
 
 interface Segment {
@@ -98,7 +102,7 @@ function annotate(tree: Root, source: string, highlights: Highlight[]): void {
           continue
         }
         for (const piece of splitByHighlights(segment.text, segment.start, highlights)) {
-          const node = sourceSpan(piece.text, piece.start, piece.threads)
+          const node = sourceSpan(piece.text, piece.start, piece.highlights)
           out.push(node)
           pieces.push({ node, parent, start: piece.start, end: piece.start + piece.text.length })
         }
@@ -114,7 +118,7 @@ function annotate(tree: Root, source: string, highlights: Highlight[]): void {
     const last = pieces.findLast((p) => p.start < h.end && p.end > h.start)
     if (!last) continue
     const siblings = last.parent.children as (RootContent | ElementContent)[]
-    siblings.splice(siblings.indexOf(last.node) + 1, 0, badge(h.threadId, h.count))
+    siblings.splice(siblings.indexOf(last.node) + 1, 0, badge(h))
   }
 }
 
@@ -128,25 +132,32 @@ function splitByHighlights(value: string, start: number, highlights: Highlight[]
   const sorted = [...cuts].sort((a, b) => a - b)
   return sorted.slice(0, -1).map((from, i) => {
     const to = sorted[i + 1]
-    const threads = highlights.filter((h) => h.start < to && h.end > from).map((h) => h.threadId)
-    return { text: value.slice(from - start, to - start), start: from, threads }
+    const covering = highlights.filter((h) => h.start < to && h.end > from)
+    return { text: value.slice(from - start, to - start), start: from, highlights: covering }
   })
 }
 
-function sourceSpan(value: string, start: number, threads: (number | null)[]): Element {
+function sourceSpan(value: string, start: number, highlights: Highlight[]): Element {
   const properties: Element['properties'] = { dataS: start }
-  if (threads.length) {
-    properties.className = threads.every((t) => t === null) ? ['anchor', 'anchor-draft'] : ['anchor']
-    properties.dataThreads = threads.map((t) => t ?? 'draft').join(' ')
+  if (highlights.length) {
+    const className = ['anchor']
+    if (highlights.every((h) => h.threadId === null)) className.push('anchor-draft')
+    else if (highlights.every((h) => h.closed)) className.push('anchor-closed')
+    properties.className = className
+    properties.dataThreads = highlights.map((h) => h.threadId ?? 'draft').join(' ')
   }
   return { type: 'element', tagName: 'span', properties, children: [text(value)] }
 }
 
-function badge(threadId: number, count: number): Element {
+function badge({ threadId, count, closed }: Highlight): Element {
   return {
     type: 'element',
     tagName: 'sup',
-    properties: { className: ['anchor-badge'], dataThread: threadId, title: 'Open side thread' },
+    properties: {
+      className: closed ? ['anchor-badge', 'anchor-closed'] : ['anchor-badge'],
+      dataThread: threadId,
+      title: 'Open side thread',
+    },
     children: [text(String(count))],
   }
 }

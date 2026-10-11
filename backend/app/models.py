@@ -51,6 +51,14 @@ class Thread(Base):
         order_by="Message.position",
         foreign_keys="Message.thread_id",
     )
+    merge_notes: Mapped[list["MergeNote"]] = relationship(
+        back_populates="thread", foreign_keys="MergeNote.thread_id", order_by="MergeNote.id"
+    )
+
+    @property
+    def merge_note(self) -> "MergeNote | None":
+        """The approved note this thread was merged with, if any."""
+        return next((n for n in self.merge_notes if n.approved), None)
 
 
 class Message(Base):
@@ -99,4 +107,4 @@ class MergeNote(Base):
     inject_after_message_id: Mapped[int | None] = mapped_column(ForeignKey("messages.id"))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
-    thread: Mapped[Thread] = relationship(foreign_keys=[thread_id])
+    thread: Mapped[Thread] = relationship(back_populates="merge_notes", foreign_keys=[thread_id])

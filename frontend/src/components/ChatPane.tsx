@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { rangeToAnchor, type SourceAnchor } from '../lib/anchors'
 import {
   getContextPreview,
@@ -26,7 +26,17 @@ interface Props {
   header?: ReactNode
   emptyText?: string
   refreshKey?: string // changes when the thread's context changes without new messages
+  closedNotice?: ReactNode // set when the thread takes no new messages; replaces the composer
+  notesAfter?(messageId: number): MergeMarker[] // merged notes that take effect after a message
   className?: string
+}
+
+/** A side thread's note as shown in the thread it was merged into. */
+export interface MergeMarker {
+  threadId: number // the merged side thread
+  label: string
+  text: string
+  pending: boolean // no user turn after it yet: it rides along with the next message
 }
 
 interface PendingReply {
@@ -39,6 +49,7 @@ interface PendingReply {
 export function ChatPane(props: Props) {
   const { thread, createThread, models, model, onModelChange, onAppend, onReplyFinished } = props
   const { anchorsFor, onOpenThread, onReplyInline, header, emptyText, refreshKey } = props
+  const { closedNotice, notesAfter } = props
   const messages = thread?.messages ?? []
   const [draft, setDraft] = useState<string | null>(null) // streaming reply, null when idle
   const [error, setError] = useState<string | null>(null)
@@ -172,30 +183,53 @@ export function ChatPane(props: Props) {
             <p className="empty">{emptyText ?? 'Start the conversation below.'}</p>
           )}
           {messages.map((m) => (
-            <MessageView
-              key={m.id}
-              role={m.role}
-              content={m.content}
-              error={m.error}
-              messageId={m.id > 0 ? m.id : undefined} // negative ids are local placeholders
-              anchors={anchorsFor?.(m.id)}
-              onOpenThread={onOpenThread}
-            />
+            <Fragment key={m.id}>
+              <MessageView
+                role={m.role}
+                content={m.content}
+                error={m.error}
+                messageId={m.id > 0 ? m.id : undefined} // negative ids are local placeholders
+                anchors={anchorsFor?.(m.id)}
+                onOpenThread={onOpenThread}
+              />
+              {notesAfter?.(m.id).map((note) => (
+                <button
+                  key={note.threadId}
+                  className="merge-marker"
+                  onClick={() => onOpenThread?.(note.threadId)}
+                  title={
+                    note.pending
+                      ? 'Merged from a side thread; sent with your next message'
+                      : 'Merged from a side thread; in this thread\'s context'
+                  }
+                >
+                  <span className="merge-marker-label">
+                    Merged · re {note.label}
+                    {note.pending && ' · goes with your next message'}
+                  </span>
+                  <span>{note.text}</span>
+                </button>
+              ))}
+            </Fragment>
           ))}
           {draft !== null && <MessageView role="assistant" content={draft} streaming />}
           {error && <div className="message-error">{error}</div>}
         </div>
       </div>
       <div className="chat-column">
-        <Composer
-          models={models}
-          model={model}
-          onModelChange={onModelChange}
-          streaming={draft !== null}
-          onSend={send}
-          onStop={() => abortRef.current?.abort()}
-          status={<ContextMeter preview={preview} />}
-        />
+        {closedNotice ? (
+          <div className="composer-closed">{closedNotice}</div>
+        ) : (
+          <Composer
+            models={models}
+            model={model}
+            onModelChange={onModelChange}
+            streaming={draft !== null}
+            onSend={send}
+            onStop={() => abortRef.current?.abort()}
+            status={<ContextMeter preview={preview} />}
+          />
+        )}
       </div>
       {pendingReply && (
         <button

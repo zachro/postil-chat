@@ -8,6 +8,9 @@ Every thread's context is the same system prompt followed by its turns:
 - side thread: its parent's turns (recursively, so nested threads get the whole
   chain) up to and including the anchor message, then a focus turn, then its own
   messages. Volatile parts come last, so siblings share a byte-identical prefix.
+
+assemble_summary_context() builds the merge-back summarizer's request: just the
+focus span and the side thread's own transcript, not the parent history.
 """
 
 from collections import defaultdict
@@ -18,7 +21,12 @@ from sqlalchemy.orm import Session
 
 from app.llm.base import ChatMessage
 from app.models import MergeNote, Message, MessageVersion, Thread
-from app.prompts import SIDE_THREAD_INSTRUCTION, SYSTEM_PROMPT
+from app.prompts import (
+    SIDE_THREAD_INSTRUCTION,
+    SUMMARIZE_REQUEST,
+    SUMMARIZER_PROMPT,
+    SYSTEM_PROMPT,
+)
 
 NOTE_QUOTE_CHARS = 40  # note label fallback when the side thread has no section
 
@@ -34,6 +42,26 @@ def assemble_context(session: Session, thread_id: int) -> list[ChatMessage]:
     if thread is None:
         raise LookupError(f"thread {thread_id} not found")
     return [ChatMessage("system", SYSTEM_PROMPT), *(t.message for t in _turns(session, thread))]
+
+
+def assemble_summary_context(session: Session, thread_id: int) -> list[ChatMessage]:
+    """The summarizer's prompt for a side thread's merge note (CLAUDE.md section 7)."""
+    thread = session.get(Thread, thread_id)
+    if thread is None:
+        raise LookupError(f"thread {thread_id} not found")
+    if thread.kind != "side":
+        raise ValueError("only side threads are summarized")
+    turns = _own_turns(session, thread)
+    if not turns:
+        raise ValueError(f"side thread {thread_id} has no messages to summarize")
+    speaker = {"user": "User", "assistant": "Assistant"}
+    transcript = "\n\n".join(f"{speaker[t.message.role]}: {t.message.content}" for t in turns)
+    request = (
+        f"<focus>\n{_escape(thread.anchor_quote or '')}\n</focus>\n"
+        f"<{_TRANSCRIPT_TAG}>\n{_escape(transcript, (_TRANSCRIPT_TAG,))}\n</{_TRANSCRIPT_TAG}>\n"
+        f"{SUMMARIZE_REQUEST}"
+    )
+    return [ChatMessage("system", SUMMARIZER_PROMPT), ChatMessage("user", request)]
 
 
 def _turns(session: Session, thread: Thread) -> list[_Turn]:
@@ -112,7 +140,10 @@ def _notes_by_message(
 
 
 def _notes_block(notes: list[MergeNote]) -> str:
-    lines = [f"- [re {_note_label(n.thread)}] {_escape(n.note_text)}" for n in notes]
+    lines = []
+    for n in notes:
+        text = "\n  ".join(line for line in n.note_text.strip().splitlines() if line.strip())
+        lines.append(f"- [re {_note_label(n.thread)}] {_escape(text)}")
     body = "\n".join(lines)
     return f"<resolved_side_threads>\n{body}\n</resolved_side_threads>"
 
@@ -147,10 +178,11 @@ def _version_content(session: Session, message_id: int, version: int) -> str | N
 
 
 _TAGS = ("side_thread", "focus", "resolved_side_threads")
+_TRANSCRIPT_TAG = "side_thread_transcript"
 
 
-def _escape(text: str) -> str:
+def _escape(text: str, tags: tuple[str, ...] = _TAGS) -> str:
     """Stop stored text (quotes, notes) from closing the tags that wrap it."""
-    for tag in _TAGS:
+    for tag in tags:
         text = text.replace(f"</{tag}", f"<\\/{tag}")
     return text

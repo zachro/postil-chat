@@ -141,6 +141,22 @@ describe('rehypeSourceMap highlights', () => {
     ])
   })
 
+  it('mutes highlights whose threads are all resolved or merged', () => {
+    const root = render('abcdefghij', [
+      { start: 0, end: 6, threadId: 1, count: 2, closed: true },
+      { start: 4, end: 10, threadId: 2, count: 1 },
+    ])
+    expect(
+      [...root.querySelectorAll('.anchor')].map((m) => [m.textContent, m.classList.contains('anchor-closed')]),
+    ).toEqual([
+      ['abcd', true],
+      ['ef', false],
+      ['ghij', false],
+    ])
+    const badges = [...root.querySelectorAll('.anchor-badge')]
+    expect(badges.map((b) => b.classList.contains('anchor-closed'))).toEqual([true, false])
+  })
+
   it('draws drafts without a badge', () => {
     const root = render('Hello world', [{ start: 6, end: 11, threadId: null, count: 0 }])
     expect(root.querySelector('.anchor-draft')?.textContent).toBe('world')

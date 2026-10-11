@@ -13,6 +13,7 @@ from app.config import ModelConfig, Settings, get_settings
 from app.context import assemble_context
 from app.db import init_db, make_engine
 from app.llm import LLMProvider, estimate_tokens, get_provider
+from app.merge import merge_thread, summarize_thread
 from app.models import Conversation, Message, MessageVersion, Thread
 from app.schemas import (
     ContextMessage,
@@ -20,9 +21,11 @@ from app.schemas import (
     ConversationCreate,
     ConversationOut,
     ConversationSummary,
+    MergeRequest,
     MessageOut,
     ModelInfo,
     ModelsResponse,
+    NoteProposal,
     SendMessage,
     SideThreadCreate,
     ThreadOut,
@@ -64,6 +67,12 @@ def create_app(
         if thread is None:
             raise HTTPException(404, "thread not found")
         return thread
+
+    def require_open_side_thread(thread: Thread) -> None:
+        if thread.kind != "side":
+            raise HTTPException(422, "only side threads can be resolved or merged")
+        if thread.status != "open":
+            raise HTTPException(409, f"thread is already {thread.status}")
 
     def thread_depth(thread: Thread) -> int:
         depth = 0
@@ -151,6 +160,39 @@ def create_app(
             thread.context_mode = body.context_mode
         if body.title is not None:
             thread.title = body.title
+        if body.status is not None and body.status != thread.status:
+            if thread.kind == "main":
+                raise HTTPException(422, "the main thread cannot be resolved")
+            if thread.status == "merged":
+                raise HTTPException(409, "a merged thread cannot be reopened")
+            thread.status = body.status  # open <-> resolved (resolve without merging)
+        session.commit()
+        return ThreadOut.model_validate(thread)
+
+    @router.post("/threads/{thread_id}/summarize")
+    async def summarize(thread_id: int, session: SessionDep) -> NoteProposal:
+        """Propose a merge note for a side thread. Nothing is stored until /merge."""
+        thread = get_thread(session, thread_id)
+        require_open_side_thread(thread)
+        model_id = settings.summarizer_model or thread_model(thread)
+        try:
+            note = await summarize_thread(
+                session, thread_id, provider_for(settings.models[model_id])
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(502, f"summarizer failed: {exc or type(exc).__name__}") from exc
+        return NoteProposal(note_text=note, model=model_id)
+
+    @router.post("/threads/{thread_id}/merge")
+    def merge(thread_id: int, body: MergeRequest, session: SessionDep) -> ThreadOut:
+        """Approve a (possibly edited) note: inject it into the parent thread's context."""
+        thread = get_thread(session, thread_id)
+        require_open_side_thread(thread)
+        if not body.note_text.strip():
+            raise HTTPException(422, "the note is empty")
+        merge_thread(session, thread, body.note_text)
         session.commit()
         return ThreadOut.model_validate(thread)
 
@@ -163,6 +205,8 @@ def create_app(
         is saved even if generation fails, with `error` set and partial content.
         """
         thread = get_thread(session, thread_id)
+        if thread.status != "open":
+            raise HTTPException(409, f"thread is {thread.status}; reopen it to continue")
         model_id = body.model or thread_model(thread)
         if model_id not in settings.models:
             raise HTTPException(422, f"unknown model {model_id!r}")

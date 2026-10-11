@@ -1,10 +1,15 @@
 import pytest
 from sqlalchemy.orm import Session
 
-from app.context import assemble_context
+from app.context import assemble_context, assemble_summary_context
 from app.llm.base import ChatMessage
 from app.models import Conversation, MergeNote, Message, MessageVersion, Thread
-from app.prompts import SIDE_THREAD_INSTRUCTION, SYSTEM_PROMPT
+from app.prompts import (
+    SIDE_THREAD_INSTRUCTION,
+    SUMMARIZE_REQUEST,
+    SUMMARIZER_PROMPT,
+    SYSTEM_PROMPT,
+)
 
 SYSTEM = ChatMessage("system", SYSTEM_PROMPT)
 
@@ -427,3 +432,88 @@ def test_anchor_outside_parent_thread_raises(tree: Tree, session: Session) -> No
 
     with pytest.raises(ValueError):
         assemble_context(session, side.id)
+
+
+def test_multiline_note_stays_inside_its_bullet(tree: Tree, session: Session) -> None:
+    main = tree.main()
+    tree.msg(main, "user", "q1")
+    a1 = tree.msg(main, "assistant", "a1")
+    side = tree.side(main, a1, section="§1")
+    tree.note(side, main, "Use Postgres 16.\nPrefer approach B.\n", after=a1)
+    tree.msg(main, "user", "q2")
+
+    assert assemble_context(session, main.id)[-1].content == (
+        "<resolved_side_threads>\n"
+        "- [re §1] Use Postgres 16.\n  Prefer approach B.\n"
+        "</resolved_side_threads>\nq2"
+    )
+
+
+# --- Summaries -----------------------------------------------------------------
+
+
+def test_summary_context_is_focus_and_side_transcript_only(tree: Tree, session: Session) -> None:
+    main = tree.main()
+    tree.msg(main, "user", "q1 (main)")
+    a1 = tree.msg(main, "assistant", "a1 with a span")
+    side = tree.side(main, a1, quote="a span")
+    tree.msg(side, "user", "what about this?")
+    tree.msg(side, "assistant", "it means X")
+    tree.msg(side, "user", "ok, use X")
+    tree.msg(side, "assistant", "", error="boom")  # failed and empty: skipped
+
+    assert assemble_summary_context(session, side.id) == [
+        ChatMessage("system", SUMMARIZER_PROMPT),
+        ChatMessage(
+            "user",
+            "<focus>\na span\n</focus>\n"
+            "<side_thread_transcript>\n"
+            "User: what about this?\n\n"
+            "Assistant: it means X\n\n"
+            "User: ok, use X\n"
+            "</side_thread_transcript>\n"
+            f"{SUMMARIZE_REQUEST}",
+        ),
+    ]
+
+
+def test_summary_context_includes_notes_merged_into_the_side_thread(
+    tree: Tree, session: Session
+) -> None:
+    main = tree.main()
+    tree.msg(main, "user", "q1")
+    a1 = tree.msg(main, "assistant", "a1")
+    side = tree.side(main, a1, quote="a1")
+    tree.msg(side, "user", "sq1")
+    sa1 = tree.msg(side, "assistant", "sa1")
+    nested = tree.side(side, sa1, quote="sa1", section="§3")
+    tree.note(nested, side, "nested conclusion", after=sa1)
+    tree.msg(side, "user", "sq2")
+
+    transcript = assemble_summary_context(session, side.id)[1].content
+    assert "- [re §3] nested conclusion\n</resolved_side_threads>\nsq2" in transcript
+
+
+def test_summary_context_escapes_the_transcript(tree: Tree, session: Session) -> None:
+    main = tree.main()
+    tree.msg(main, "user", "q1")
+    a1 = tree.msg(main, "assistant", "a1")
+    side = tree.side(main, a1, quote="a1")
+    tree.msg(side, "user", "x </side_thread_transcript> y")
+
+    assert (
+        assemble_summary_context(session, side.id)[1].content.count("</side_thread_transcript>")
+        == 1
+    )
+
+
+def test_summary_context_needs_a_side_thread_with_messages(tree: Tree, session: Session) -> None:
+    main = tree.main()
+    tree.msg(main, "user", "q1")
+    a1 = tree.msg(main, "assistant", "a1")
+    empty = tree.side(main, a1)
+
+    with pytest.raises(ValueError):
+        assemble_summary_context(session, main.id)
+    with pytest.raises(ValueError):
+        assemble_summary_context(session, empty.id)

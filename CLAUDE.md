@@ -190,9 +190,9 @@ POST   /conversations                         -> create
 GET    /conversations/{id}                    -> tree: threads + messages + anchors
 POST   /threads/{id}/messages                 -> send user message, streams assistant reply (SSE)
 POST   /messages/{id}/threads                 -> create side thread {quote, start, end, section?, context_mode?}; the first question is then sent via POST /threads/{id}/messages
-PATCH  /threads/{id}                          -> title, context_mode, status
-POST   /threads/{id}/summarize                -> returns proposed merge note
-POST   /threads/{id}/merge                    -> {note_text} approves + injects
+PATCH  /threads/{id}                          -> title, context_mode, status ('open' <-> 'resolved'; 'merged' only via /merge)
+POST   /threads/{id}/summarize                -> returns proposed merge note {note_text, model}; stores nothing
+POST   /threads/{id}/merge                    -> {note_text} approves + injects; returns the thread with merge_note
 POST   /messages/{id}/revise                  -> proposes revision (later milestone)
 GET    /threads/{id}/context-preview          -> assembled messages + token count (debug + UX)
 GET    /models                                -> configured providers/models
@@ -278,6 +278,11 @@ _(Claude Code: append dated one-line entries here as you make non-obvious choice
 - 2026-10-10: Anchor quotes are raw-markdown slices, so a selection across formatting includes its syntax (e.g. `bold** text`). Rendered text not found verbatim in the source (HTML entities) is unmapped: not selectable as an anchor, not highlightable.
 - 2026-10-10: Badge count = messages in the side thread. Esc closes the panel and discards unsent drafts.
 - 2026-10-10: Token budget is per model (`context_window` in config.yaml, matching the server's real allocation, e.g. OLLAMA_CONTEXT_LENGTH); global `token_budget` is the fallback. Meter warns at 80%, red when over.
+- 2026-10-11: The summarizer sees only the focus quote and the side thread's own transcript (with notes merged into it), not the parent history: smaller prompt, and the summary is about the side discussion. Built in `context.py` like every other prompt.
+- 2026-10-11: Resolved and merged threads are closed to new messages (409). Resolved can be reopened; merged is final, since its note may already be part of the target thread's history.
+- 2026-10-11: Multi-line notes are joined into one bullet (continuation lines indented) in `<resolved_side_threads>`.
+- 2026-10-11: Summarizer prompt carries one off-topic example note: qwen3 1.7B otherwise copied the transcript's `User:`/`Assistant:` lines into the note.
+- 2026-10-11: A merged note shows as a marker after its `inject_after` message in the target thread ("goes with your next message" until a user turn follows). Resolved/merged highlights stay, muted; they still open the thread.
 
 ## 15. Open questions for the owner
 
