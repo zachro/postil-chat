@@ -9,6 +9,7 @@
   --accent-fg: #ffffff;
   --error: #c92a2a;
   --warn: #b35c00;
+  --ok: #2b8a3e;
   --code-bg: #f1f1ef;
   --highlight: #fff1b8;
   --highlight-active: #ffe066;
@@ -32,6 +33,7 @@
     --accent-fg: #111111;
     --error: #ff8787;
     --warn: #ffa94d;
+    --ok: #69db7c;
     --code-bg: #26262a;
     --highlight: #4a3f12;
     --highlight-active: #6b5a14;
@@ -485,4 +487,132 @@ button.primary {
   border: 1px solid currentColor;
   border-radius: 8px;
   padding: 0 6px;
+}
+
+/* Merge-back */
+
+.status {
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  padding: 0 6px;
+}
+
+.status-merged {
+  color: var(--ok);
+}
+
+.side-controls button {
+  font-size: 1em;
+  padding: 2px 8px;
+}
+
+.merged-note {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--ok);
+  background: var(--bg-subtle);
+  font-size: 0.9em;
+}
+
+.merged-note p {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+}
+
+.muted {
+  color: var(--fg-muted);
+  font-size: 0.9em;
+}
+
+.anchor-closed {
+  background: none;
+  text-decoration: underline dotted var(--fg-muted);
+  text-underline-offset: 3px;
+}
+
+.anchor.anchor-closed:hover {
+  background: var(--bg-subtle);
+}
+
+.anchor-badge.anchor-closed {
+  background: var(--border);
+  color: var(--fg-muted);
+}
+
+.merge-marker {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  margin: -4px 0 16px;
+  padding: 6px 10px;
+  border: 1px dashed var(--border);
+  border-left: 3px solid var(--ok);
+  border-radius: 4px;
+  background: var(--bg-subtle);
+  color: var(--fg);
+  text-align: left;
+  font-size: 0.85em;
+  white-space: pre-wrap;
+}
+
+.merge-marker-label {
+  color: var(--fg-muted);
+  font-size: 0.9em;
+}
+
+.composer-closed {
+  margin: 12px 0 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg-muted);
+  font-size: 0.9em;
+  text-align: center;
+}
+
+.merge-dialog {
+  width: min(560px, 90vw);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--fg);
+  padding: 16px 18px;
+}
+
+.merge-dialog::backdrop {
+  background: rgb(0 0 0 / 0.35);
+}
+
+.merge-dialog h2 {
+  margin: 0 0 10px;
+  font-size: 1.1em;
+}
+
+.merge-dialog label {
+  display: block;
+  margin: 12px 0 4px;
+  font-weight: 600;
+}
+
+.merge-dialog textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  resize: vertical;
+}
+
+.merge-dialog footer {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.merge-dialog .spacer {
+  flex: 1;
 }

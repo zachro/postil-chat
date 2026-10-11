@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import type { ContextMode } from '../lib/api'
+import type { ContextMode, Thread } from '../lib/api'
 
 export interface PanelTab {
   key: string
@@ -45,10 +45,15 @@ interface HeaderProps {
   detached: boolean
   contextMode: ContextMode
   onContextModeChange(mode: ContextMode): void
+  thread: Thread | null // null for a draft
+  onResolve(): void
+  onReopen(): void
 }
 
 /** The focus span a side thread is about, plus its per-thread controls. */
-export function SideThreadHeader({ quote, detached, contextMode, onContextModeChange }: HeaderProps) {
+export function SideThreadHeader(props: HeaderProps) {
+  const { quote, detached, contextMode, onContextModeChange, thread, onResolve, onReopen } = props
+  const status = thread?.status ?? 'open'
   return (
     <div className="side-header">
       <blockquote className="focus-quote">{quote}</blockquote>
@@ -58,14 +63,29 @@ export function SideThreadHeader({ quote, detached, contextMode, onContextModeCh
             detached
           </span>
         )}
-        <label title="What the model sees from the parent thread">
-          Context{' '}
-          <select value={contextMode} onChange={(e) => onContextModeChange(e.target.value as ContextMode)}>
-            <option value="as_of_anchor">up to this reply</option>
-            <option value="as_of_now">whole conversation</option>
-          </select>
-        </label>
+        {status !== 'open' && <span className={`status status-${status}`}>{status}</span>}
+        {status === 'open' && (
+          <label title="What the model sees from the parent thread">
+            Context{' '}
+            <select value={contextMode} onChange={(e) => onContextModeChange(e.target.value as ContextMode)}>
+              <option value="as_of_anchor">up to this reply</option>
+              <option value="as_of_now">whole conversation</option>
+            </select>
+          </label>
+        )}
+        {status === 'open' && thread && thread.messages.length > 0 && (
+          <button onClick={onResolve} title="Summarize into a note for the parent thread, or just close">
+            Resolve…
+          </button>
+        )}
+        {status === 'resolved' && <button onClick={onReopen}>Reopen</button>}
       </div>
+      {thread?.merge_note && (
+        <div className="merged-note">
+          <span className="muted">Merged note</span>
+          <p>{thread.merge_note.note_text}</p>
+        </div>
+      )}
     </div>
   )
 }

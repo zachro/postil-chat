@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChatPane } from './components/ChatPane'
+import { ChatPane, type MergeMarker } from './components/ChatPane'
 import { ConversationList } from './components/ConversationList'
+import { MergeNoteDialog } from './components/MergeNoteDialog'
 import type { MessageAnchor } from './components/MessageView'
 import { SidePanel, SideThreadHeader } from './components/SidePanel'
 import { locateAnchor, type SourceAnchor } from './lib/anchors'
@@ -10,6 +11,7 @@ import {
   getConversation,
   getModels,
   listConversations,
+  mergeThread,
   updateThread,
   type ContextMode,
   type Conversation,
@@ -21,6 +23,7 @@ import {
 
 const MAX_DEPTH = 3 // side threads nest at most this deep (main thread is 0)
 const TAB_LABEL_CHARS = 28
+const NOTE_LABEL_CHARS = 40
 
 /** A side thread the user started but has not sent a first message in yet. */
 interface DraftThread {
@@ -54,6 +57,7 @@ export default function App() {
   const [tabs, setTabs] = useState<Tab[]>([])
   const [activeTab, setActiveTab] = useState<string | null>(null)
   const draftCounter = useRef(0)
+  const [resolving, setResolving] = useState<number | null>(null) // thread id in the merge dialog
   const [error, setError] = useState<string | null>(null)
 
   const refreshList = useCallback(async () => {
@@ -64,12 +68,14 @@ export default function App() {
     setConversation(await getConversation(id))
     setPaneKey((k) => k + 1)
     setTabs([])
+    setResolving(null)
   }, [])
 
   function startNew() {
     setConversation(null)
     setPaneKey((k) => k + 1)
     setTabs([])
+    setResolving(null)
   }
 
   useEffect(() => {
@@ -134,11 +140,33 @@ export default function App() {
         end: t.anchor_end ?? 0,
         threadId: t.id,
         count: t.messages.length,
+        closed: t.status !== 'open',
       }))
     const drafts = tabs.flatMap((tab) =>
       tab.draft?.messageId === messageId ? [{ ...tab.draft.anchor, threadId: null, count: 0 }] : [],
     )
     return [...saved, ...drafts]
+  }
+
+  /** Notes merged into a thread right after `messageId`, for markers in that thread. */
+  function notesAfter(messageId: number): MergeMarker[] {
+    return threads.flatMap((t) => {
+      const note = t.merge_note
+      if (!note || note.inject_after_message_id !== messageId) return []
+      const target = threadById(note.target_thread_id)
+      const after = target?.messages.find((m) => m.id === messageId)
+      const pending = !target?.messages.some((m) => m.role === 'user' && m.position > (after?.position ?? -1))
+      const label = t.anchor_section ?? `"${shorten(t.anchor_quote ?? '', NOTE_LABEL_CHARS)}"`
+      return [{ threadId: t.id, label, text: note.note_text, pending }]
+    })
+  }
+
+  function replaceThread(updated: Thread) {
+    updateThreadState(updated.id, () => updated)
+  }
+
+  async function setStatus(threadId: number, status: 'open' | 'resolved') {
+    replaceThread(await updateThread(threadId, { status }))
   }
 
   function isDetached(thread: Thread): boolean {
@@ -194,8 +222,10 @@ export default function App() {
   }
 
   function tabLabel(tab: Tab): string {
-    const quote = tab.draft?.anchor.quote ?? threadById(tab.threadId)?.anchor_quote ?? 'Side thread'
-    return shorten(quote, TAB_LABEL_CHARS)
+    const thread = threadById(tab.threadId)
+    const quote = tab.draft?.anchor.quote ?? thread?.anchor_quote ?? 'Side thread'
+    const done = thread && thread.status !== 'open' ? '✓ ' : ''
+    return done + shorten(quote, TAB_LABEL_CHARS)
   }
 
   function renderTab(key: string) {
@@ -217,14 +247,29 @@ export default function App() {
         onAppend={appendMessage}
         onReplyFinished={() => {}}
         anchorsFor={anchorsFor}
+        notesAfter={notesAfter}
         onOpenThread={openThread}
-        onReplyInline={thread && depth(thread) < MAX_DEPTH ? (id, anchor) => replyInline(thread, id, anchor) : undefined}
+        onReplyInline={
+          thread && thread.status === 'open' && depth(thread) < MAX_DEPTH
+            ? (id, anchor) => replyInline(thread, id, anchor)
+            : undefined
+        }
+        closedNotice={
+          thread?.status === 'merged'
+            ? 'Merged: the note above is in the parent thread\'s context.'
+            : thread?.status === 'resolved'
+              ? 'Resolved without merging. Reopen to continue.'
+              : undefined
+        }
         header={
           <SideThreadHeader
             quote={draft?.anchor.quote ?? thread!.anchor_quote ?? ''}
             detached={thread ? isDetached(thread) : false}
             contextMode={draft?.contextMode ?? thread!.context_mode}
             onContextModeChange={(mode) => changeContextMode(tab, mode).catch((e) => setError(String(e)))}
+            thread={thread}
+            onResolve={() => thread && setResolving(thread.id)}
+            onReopen={() => thread && setStatus(thread.id, 'open').catch((e) => setError(String(e)))}
           />
         }
         emptyText="Ask about the highlighted text."
@@ -266,6 +311,7 @@ export default function App() {
         onAppend={appendMessage}
         onReplyFinished={() => refreshList().catch(() => {})}
         anchorsFor={anchorsFor}
+        notesAfter={notesAfter}
         onOpenThread={openThread}
         onReplyInline={mainThread ? (id, anchor) => replyInline(mainThread, id, anchor) : undefined}
       />
@@ -276,6 +322,15 @@ export default function App() {
           onActivate={setActiveTab}
           onClose={closeTab}
           renderTab={renderTab}
+        />
+      )}
+      {resolving !== null && (
+        <MergeNoteDialog
+          threadId={resolving}
+          quote={threadById(resolving)?.anchor_quote ?? ''}
+          onMerge={async (note) => replaceThread(await mergeThread(resolving, note))}
+          onResolve={() => setStatus(resolving, 'resolved')}
+          onClose={() => setResolving(null)}
         />
       )}
     </div>

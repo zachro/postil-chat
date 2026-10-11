@@ -281,6 +281,8 @@ _(Claude Code: append dated one-line entries here as you make non-obvious choice
 - 2026-10-11: The summarizer sees only the focus quote and the side thread's own transcript (with notes merged into it), not the parent history: smaller prompt, and the summary is about the side discussion. Built in `context.py` like every other prompt.
 - 2026-10-11: Resolved and merged threads are closed to new messages (409). Resolved can be reopened; merged is final, since its note may already be part of the target thread's history.
 - 2026-10-11: Multi-line notes are joined into one bullet (continuation lines indented) in `<resolved_side_threads>`.
+- 2026-10-11: Summarizer prompt carries one off-topic example note: qwen3 1.7B otherwise copied the transcript's `User:`/`Assistant:` lines into the note.
+- 2026-10-11: A merged note shows as a marker after its `inject_after` message in the target thread ("goes with your next message" until a user turn follows). Resolved/merged highlights stay, muted; they still open the thread.
 
 ## 15. Open questions for the owner
 

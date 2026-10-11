@@ -7,6 +7,7 @@ import type { Message } from '../lib/api'
 export interface MessageAnchor extends SourceAnchor {
   threadId: number | null
   count: number
+  closed?: boolean // resolved or merged
 }
 
 interface Props {
@@ -26,7 +27,7 @@ export function MessageView(props: Props) {
     const highlights: Highlight[] = []
     for (const a of anchors ?? []) {
       const span = locateAnchor(content, a) // detached anchors are shown in the panel only
-      if (span) highlights.push({ start: span[0], end: span[1], threadId: a.threadId, count: a.count })
+      if (span) highlights.push({ ...a, start: span[0], end: span[1] })
     }
     return [[rehypeSourceMap, { source: content, highlights }] as [typeof rehypeSourceMap, object]]
   }, [anchors, content])
