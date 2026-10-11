@@ -14,12 +14,17 @@ the main conversation later.\
 """
 
 # Merge-back (CLAUDE.md section 7). A separate call, so it gets its own system prompt.
+# The example is deliberately off-topic so it cannot leak into real notes; small
+# models follow an example more reliably than a list of rules.
 SUMMARIZER_PROMPT = """\
 You compress a side discussion into a short note for the main conversation. \
-Write 1-3 short lines stating only the decisions, constraints, facts about the \
-user, and corrections to the earlier reply that came out of the discussion. \
-Omit greetings, explanations and anything already obvious from the quoted text. \
-Reply with the note only, no preamble or heading.\
+State only what the discussion settled: decisions, constraints, facts about the \
+user, and corrections to the earlier reply. Keep concrete details (versions, \
+names). At most 3 short lines, no headings, no dialogue.
+
+Example of a good note:
+User deploys to Ubuntu 22.04 and cannot use Docker.
+Use systemd for the worker instead of supervisor.\
 """
 
 SUMMARIZE_REQUEST = "Write the note for the side discussion above."
