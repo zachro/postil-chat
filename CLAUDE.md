@@ -283,6 +283,10 @@ _(Claude Code: append dated one-line entries here as you make non-obvious choice
 - 2026-10-11: Multi-line notes are joined into one bullet (continuation lines indented) in `<resolved_side_threads>`.
 - 2026-10-11: Summarizer prompt carries one off-topic example note: qwen3 1.7B otherwise copied the transcript's `User:`/`Assistant:` lines into the note.
 - 2026-10-11: A merged note shows as a marker after its `inject_after` message in the target thread ("goes with your next message" until a user turn follows). Resolved/merged highlights stay, muted; they still open the thread.
+- 2026-10-11: Cache breakpoints are a provider-neutral `ChatMessage.cache_breakpoint` flag set by `assemble_context` on the last turn of each inherited prefix. The Anthropic adapter puts `cache_control` on the deepest three, plus top-level automatic caching for the tail; other adapters ignore the flag (their caching is automatic).
+- 2026-10-11: Providers fill a `Usage` record per reply (cache reads/writes included); it is returned in the `done` SSE event, shown in the context meter, and output tokens go in `messages.token_count`. No new columns.
+- 2026-10-11: A model whose `api_key_env` is unset is listed as unavailable (disabled in the picker) instead of failing on send.
+- 2026-10-11: Claude refusals and `max_tokens` stops are saved like failed generations (partial text plus `error`). The config enables server-side refusal fallbacks (`fallbacks: default`).
 
 ## 15. Open questions for the owner
 

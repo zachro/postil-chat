@@ -616,3 +616,21 @@ button.primary {
 .merge-dialog .spacer {
   flex: 1;
 }
+
+/* Prompt caching */
+
+.context-usage {
+  margin: 0;
+  padding: 10px 16px 0;
+  color: var(--fg-muted);
+  font-size: 0.85em;
+}
+
+.context-breakpoint {
+  margin-top: 4px;
+  padding-top: 2px;
+  border-top: 2px dashed var(--accent);
+  color: var(--accent);
+  font-size: 0.75em;
+  text-align: right;
+}
