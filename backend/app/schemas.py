@@ -46,6 +46,15 @@ class MessageOut(ORMModel):
     created_at: UTCDatetime
 
 
+class MergeNoteOut(ORMModel):
+    id: int
+    thread_id: int
+    target_thread_id: int
+    note_text: str
+    inject_after_message_id: int | None
+    created_at: UTCDatetime
+
+
 class ThreadOut(ORMModel):
     id: int
     kind: str
@@ -61,6 +70,7 @@ class ThreadOut(ORMModel):
     title: str | None
     model: str | None
     messages: list[MessageOut]
+    merge_note: MergeNoteOut | None
 
 
 class ConversationOut(ConversationSummary):
@@ -83,6 +93,17 @@ class SideThreadCreate(BaseModel):
 class ThreadUpdate(BaseModel):
     title: str | None = None
     context_mode: ContextMode | None = None
+    # 'merged' is set only by POST /threads/{id}/merge.
+    status: Literal["open", "resolved"] | None = None
+
+
+class NoteProposal(BaseModel):
+    note_text: str
+    model: str  # the summarizer model that wrote it
+
+
+class MergeRequest(BaseModel):
+    note_text: str = Field(min_length=1)
 
 
 class SendMessage(BaseModel):
