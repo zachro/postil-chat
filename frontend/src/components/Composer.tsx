@@ -41,8 +41,8 @@ export function Composer({ models, model, onModelChange, streaming, onSend, onSt
       <div className="composer-bar">
         <select value={model} onChange={(e) => onModelChange(e.target.value)}>
           {models.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.label}
+            <option key={m.id} value={m.id} disabled={!m.available}>
+              {m.available ? m.label : `${m.label} (set ${m.missing_env})`}
             </option>
           ))}
         </select>

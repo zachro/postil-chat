@@ -1,7 +1,8 @@
 # Postil dev commands. `make dev` runs backend and frontend together.
-.PHONY: install dev dev-backend dev-frontend test lint
+.PHONY: install dev dev-backend dev-frontend test lint cache-check
 
 ENV_FILE := $(if $(wildcard .env),--env-file ../.env)
+LOAD_ENV := $(if $(wildcard .env),set -a && . ../.env && set +a &&)
 
 install:
 	cd backend && uv sync
@@ -23,3 +24,7 @@ test:
 lint:
 	cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy
 	cd frontend && npm run lint && npm run typecheck
+
+# Confirm sibling side threads hit the prompt cache: make cache-check MODEL=claude-opus
+cache-check:
+	cd backend && $(LOAD_ENV) uv run python -m app.cache_check $(MODEL)

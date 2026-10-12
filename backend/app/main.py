@@ -1,7 +1,10 @@
 """FastAPI app and routes. Run with: uvicorn --factory app.main:create_app"""
 
 import json
+import logging
+import os
 from collections.abc import AsyncIterator, Callable, Iterator
+from dataclasses import asdict
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
@@ -12,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.config import ModelConfig, Settings, get_settings
 from app.context import assemble_context
 from app.db import init_db, make_engine
-from app.llm import LLMProvider, estimate_tokens, get_provider
+from app.llm import LLMProvider, Usage, estimate_tokens, get_provider
 from app.merge import merge_thread, summarize_thread
 from app.models import Conversation, Message, MessageVersion, Thread
 from app.schemas import (
@@ -31,6 +34,8 @@ from app.schemas import (
     ThreadOut,
     ThreadUpdate,
 )
+
+log = logging.getLogger("postil")
 
 DEFAULT_TITLE = "New conversation"
 MAX_SIDE_THREAD_DEPTH = 3  # main thread is depth 0
@@ -85,10 +90,13 @@ def create_app(
 
     @router.get("/models")
     def list_models() -> ModelsResponse:
-        return ModelsResponse(
-            models=[ModelInfo(id=m.id, label=m.label) for m in settings.models.values()],
-            default_model=settings.default_model,
-        )
+        models = []
+        for m in settings.models.values():
+            missing = m.api_key_env if m.api_key_env and not os.environ.get(m.api_key_env) else None
+            models.append(
+                ModelInfo(id=m.id, label=m.label, available=missing is None, missing_env=missing)
+            )
+        return ModelsResponse(models=models, default_model=settings.default_model)
 
     @router.get("/conversations")
     def list_conversations(session: SessionDep) -> list[ConversationSummary]:
@@ -232,10 +240,11 @@ def create_app(
         async def events() -> AsyncIterator[str]:
             yield sse("user_message", user_out)
             parts: list[str] = []
+            usage = Usage()
             error: str | None = "cancelled"  # overwritten unless the client disconnects
             try:
                 provider = provider_for(settings.models[model_id])
-                async for delta in provider.stream_chat(context):
+                async for delta in provider.stream_chat(context, usage):
                     parts.append(delta)
                     yield sse("delta", {"text": delta})
                 error = None
@@ -249,6 +258,7 @@ def create_app(
                         role="assistant",
                         content="".join(parts),
                         model=model_id,
+                        token_count=usage.output_tokens or None,
                         error=error,
                     )
                     s.add(reply)
@@ -256,10 +266,12 @@ def create_app(
                     s.add(MessageVersion(message_id=reply.id, version=1, content=reply.content))
                     s.commit()
                     reply_out = MessageOut.model_validate(reply).model_dump(mode="json")
+            usage_out = asdict(usage)
+            log.info("thread %s reply via %s: %s", thread_id, model_id, usage_out)
             if error is None:
-                yield sse("done", {"message": reply_out})
+                yield sse("done", {"message": reply_out, "usage": usage_out})
             else:
-                yield sse("error", {"error": error, "message": reply_out})
+                yield sse("error", {"error": error, "message": reply_out, "usage": usage_out})
 
         return StreamingResponse(
             events(),
@@ -283,7 +295,10 @@ def create_app(
         return ContextPreview(
             thread_id=thread_id,
             model=model_id,
-            messages=[ContextMessage(role=m.role, content=m.content) for m in context],
+            messages=[
+                ContextMessage(role=m.role, content=m.content, cache_breakpoint=m.cache_breakpoint)
+                for m in context
+            ],
             token_count=tokens.count,
             token_count_estimated=tokens.estimated,
             token_budget=settings.budget_for(model_id),

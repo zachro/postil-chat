@@ -5,6 +5,8 @@ import { readSSE } from './sse'
 export interface ModelInfo {
   id: string
   label: string
+  available: boolean // false until its API key env var is set
+  missing_env: string | null
 }
 
 export interface ModelsResponse {
@@ -25,6 +27,7 @@ export interface Message {
   role: 'user' | 'assistant'
   content: string
   model: string | null
+  token_count: number | null // output tokens, if the provider reported them
   error: string | null
   created_at: string
 }
@@ -104,11 +107,19 @@ export const mergeThread = (threadId: number, noteText: string) =>
     body: JSON.stringify({ note_text: noteText }),
   })
 
+/** Token usage of one reply. input_tokens excludes cached tokens. */
+export interface Usage {
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+}
+
 export interface SendHandlers {
   onUserMessage(message: Message): void
   onDelta(text: string): void
   /** Called once with the saved assistant message; `error` is set if generation failed. */
-  onFinish(message: Message): void
+  onFinish(message: Message, usage: Usage): void
 }
 
 /** Send a user message and stream the reply. Abort via `signal` to stop generation. */
@@ -133,7 +144,8 @@ export async function sendMessage(
     if (event === 'user_message') handlers.onUserMessage(payload as Message)
     else if (event === 'delta') handlers.onDelta((payload as { text: string }).text)
     else if (event === 'done' || event === 'error') {
-      handlers.onFinish((payload as { message: Message }).message)
+      const { message, usage } = payload as { message: Message; usage: Usage }
+      handlers.onFinish(message, usage)
     }
   }
 }
@@ -141,7 +153,7 @@ export async function sendMessage(
 export interface ContextPreview {
   thread_id: number
   model: string
-  messages: { role: 'system' | 'user' | 'assistant'; content: string }[]
+  messages: { role: 'system' | 'user' | 'assistant'; content: string; cache_breakpoint: boolean }[]
   token_count: number
   token_count_estimated: boolean
   token_budget: number

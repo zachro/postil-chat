@@ -122,3 +122,12 @@ def test_update_thread_context_mode_and_title(client: TestClient) -> None:
         == 422
     )
     assert client.patch("/api/threads/999", json={"title": "x"}).status_code == 404
+
+
+def test_context_preview_shows_where_the_shared_prefix_ends(client: TestClient) -> None:
+    _, reply = main_reply(client)
+    side = create_side(client, reply["id"]).json()
+
+    preview = client.get(f"/api/threads/{side['id']}/context-preview").json()
+
+    assert [m["cache_breakpoint"] for m in preview["messages"]] == [False, False, True, False]

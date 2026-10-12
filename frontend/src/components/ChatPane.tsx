@@ -5,6 +5,7 @@ import {
   sendMessage,
   type ContextPreview,
   type Message,
+  type Usage,
   type ModelInfo,
   type Thread,
 } from '../lib/api'
@@ -58,6 +59,7 @@ export function ChatPane(props: Props) {
   const stickToBottom = useRef(true)
   const [preview, setPreview] = useState<ContextPreview | null>(null)
   const [pendingReply, setPendingReply] = useState<PendingReply | null>(null)
+  const [lastUsage, setLastUsage] = useState<Usage | null>(null)
   const threadId = thread?.id
   const idle = draft === null
 
@@ -145,8 +147,9 @@ export function ChatPane(props: Props) {
             text += delta
             setDraft(text)
           },
-          onFinish(message) {
+          onFinish(message, usage) {
             onAppend(message)
+            setLastUsage(usage)
           },
         },
         abort.signal,
@@ -161,6 +164,7 @@ export function ChatPane(props: Props) {
           role: 'assistant',
           content: text,
           model,
+          token_count: null,
           error: 'cancelled',
           created_at: new Date().toISOString(),
         })
@@ -227,7 +231,7 @@ export function ChatPane(props: Props) {
             streaming={draft !== null}
             onSend={send}
             onStop={() => abortRef.current?.abort()}
-            status={<ContextMeter preview={preview} />}
+            status={<ContextMeter preview={preview} lastUsage={lastUsage} />}
           />
         )}
       </div>
