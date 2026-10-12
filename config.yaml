@@ -46,11 +46,11 @@ models:
       fallbacks: default
 
   # OpenAI goes through the OpenAI-compatible adapter (base_url null = api.openai.com).
-  # Uncomment and set `model` to a current OpenAI model id.
-  # - id: openai
-  #   label: OpenAI
-  #   provider: openai_compat
-  #   model: <openai model id>
-  #   base_url: null
-  #   api_key_env: OPENAI_API_KEY
-  #   context_window: 128000
+  # OpenAI caches long prompt prefixes automatically; no params needed for that.
+  - id: openai
+    label: GPT-5.5 (OpenAI)
+    provider: openai_compat
+    model: gpt-5.5
+    base_url: null
+    api_key_env: OPENAI_API_KEY
+    context_window: 400000  # budget for the meter's warning; adjust if OpenAI lists another limit
