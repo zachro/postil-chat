@@ -2,7 +2,16 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import Markdown from 'react-markdown'
 import { describe, expect, it } from 'vitest'
-import { locateAnchor, rangeToAnchor, rehypeSourceMap, type Highlight } from './anchors'
+import {
+  findSections,
+  locateAnchor,
+  rangeToAnchor,
+  rehypeSourceMap,
+  sectionOf,
+  sectionSpan,
+  sourceToRange,
+  type Highlight,
+} from './anchors'
 
 function render(source: string, highlights: Highlight[] = []): HTMLElement {
   const root = document.createElement('div')
@@ -161,6 +170,75 @@ describe('rehypeSourceMap highlights', () => {
     const root = render('Hello world', [{ start: 6, end: 11, threadId: null, count: 0 }])
     expect(root.querySelector('.anchor-draft')?.textContent).toBe('world')
     expect(root.querySelector('.anchor-badge')).toBeNull()
+  })
+
+  it('draws sent comments with their key and text, without a badge', () => {
+    const comment = { key: '5-0', text: 'Why?' }
+    const root = render('Hello world', [{ start: 6, end: 11, threadId: null, count: 0, comment }])
+    const mark = root.querySelector('.anchor-comment')!
+    expect(mark.textContent).toBe('world')
+    expect(mark.classList.contains('anchor-draft')).toBe(false)
+    expect(mark.getAttribute('data-comment')).toBe('5-0')
+    expect(mark.getAttribute('title')).toBe('Why?')
+    expect(mark.hasAttribute('data-threads')).toBe(false)
+    expect(root.querySelector('.anchor-badge')).toBeNull()
+  })
+})
+
+const LABELLED = '## §1 Install\n\nRun it.\n\n### §2. Configure\n\n- **§3** Check\n- plain item'
+
+describe('section labels', () => {
+  it('finds labels at the start of lines, headings and list items', () => {
+    expect(findSections(LABELLED)).toEqual([
+      { label: '§1', start: 3, end: 5 },
+      { label: '§2', start: 28, end: 31 },
+      { label: '§3', start: 47, end: 49 },
+    ])
+  })
+
+  it('ignores § in the middle of a line', () => {
+    expect(findSections('See §2 of the spec.\nAs §3 says')).toEqual([])
+  })
+
+  it('names the section a span falls in, or none if it crosses a label', () => {
+    const at = (needle: string) => LABELLED.indexOf(needle)
+    expect(sectionOf(LABELLED, at('Run'), at('Run') + 3)).toBe('§1')
+    expect(sectionOf(LABELLED, at('§1'), at('Install') + 7)).toBe('§1')
+    expect(sectionOf(LABELLED, at('Configure'), at('Configure') + 9)).toBe('§2')
+    expect(sectionOf(LABELLED, at('Run'), at('Configure'))).toBeNull()
+    expect(sectionOf('Intro.\n\n§1 Body', 0, 5)).toBeNull()
+  })
+
+  it('spans a section from its label to the next one', () => {
+    expect(LABELLED.slice(...sectionSpan(LABELLED, 3))).toBe('§1 Install\n\nRun it.')
+    expect(LABELLED.slice(...sectionSpan(LABELLED, 47))).toBe('§3** Check\n- plain item')
+  })
+
+  it('renders labels as gutter spans that stay part of the source map', () => {
+    const root = render(LABELLED)
+    const labels = [...root.querySelectorAll('.section-label')]
+    expect(labels.map((l) => [l.textContent, l.getAttribute('data-section-start')])).toEqual([
+      ['§1', '3'],
+      ['§2.', '28'],
+      ['§3', '47'],
+    ])
+    expect(rangeToAnchor(root, selectRendered(root, '§1 Install'), LABELLED)?.quote).toBe(
+      '§1 Install',
+    )
+  })
+})
+
+describe('sourceToRange', () => {
+  it('selects the rendered text of a source span', () => {
+    const source = 'Use **bold** text\n\nNext para'
+    const root = render(source)
+    const range = sourceToRange(root, 6, source.indexOf('Next') + 4)!
+    expect(range.toString()).toBe('bold text\nNext')
+    expect(rangeToAnchor(root, range, source)?.quote).toBe('bold** text\n\nNext')
+  })
+
+  it('returns null when nothing in the span is rendered', () => {
+    expect(sourceToRange(render('Hello'), 10, 12)).toBeNull()
   })
 })
 

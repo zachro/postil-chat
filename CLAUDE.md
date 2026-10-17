@@ -287,6 +287,10 @@ _(Claude Code: append dated one-line entries here as you make non-obvious choice
 - 2026-10-11: Providers fill a `Usage` record per reply (cache reads/writes included); it is returned in the `done` SSE event, shown in the context meter, and output tokens go in `messages.token_count`. No new columns.
 - 2026-10-11: A model whose `api_key_env` is unset is listed as unavailable (disabled in the picker) instead of failing on send.
 - 2026-10-11: Claude refusals and `max_tokens` stops are saved like failed generations (partial text plus `error`). The config enables server-side refusal fallbacks (`fallbacks: default`).
+- 2026-10-17: A line-start `§n` (after heading/list/quote markers and an opening `**`) is a section label; mid-line `§` is not. A span's section is the last label at or before it, or none if it crosses a label. Clicking a gutter label selects its whole section.
+- 2026-10-17: Multi-anchor comments live in a new `inline_replies` table (a new table needs no migration under `create_all`). `messages.content` keeps only the free text; `context.py` renders one `<inline_replies>` block per target message.
+- 2026-10-17: Inline replies may only target assistant messages in the same thread. The `quote` fallback is the first 40 chars (whitespace collapsed, `…` if cut, `"` as `&quot;`).
+- 2026-10-17: The comment tray is per chat pane, so it works in open side threads too, not only the main thread.
 
 ## 15. Open questions for the owner
 
