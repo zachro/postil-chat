@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.context import assemble_context, assemble_summary_context
 from app.llm.base import ChatMessage
-from app.models import Conversation, MergeNote, Message, MessageVersion, Thread
+from app.models import Conversation, InlineReply, MergeNote, Message, MessageVersion, Thread
 from app.prompts import (
     SIDE_THREAD_INSTRUCTION,
     SUMMARIZE_REQUEST,
@@ -83,6 +83,27 @@ class Tree:
                 inject_after_message_id=after.id if after else None,
             )
         )
+        self.session.flush()
+
+    def replies(
+        self, message: Message, target: Message, *replies: tuple[str, str | None, str]
+    ) -> None:
+        """Attach (quote, section, comment) inline replies to a user message."""
+        for i, (quote, section, comment) in enumerate(replies):
+            start = target.content.find(quote)
+            self.session.add(
+                InlineReply(
+                    message_id=message.id,
+                    position=i,
+                    target_message_id=target.id,
+                    quote=quote,
+                    start=start,
+                    end=start + len(quote),
+                    section=section,
+                    target_version=1,
+                    comment=comment,
+                )
+            )
         self.session.flush()
 
     def _thread(self, thread: Thread) -> Thread:
@@ -276,6 +297,116 @@ def test_stored_text_cannot_close_our_tags(tree: Tree, session: Session) -> None
     side_ctx = assemble_context(session, side.id)
     assert side_ctx[-1].content.count("</focus>") == 1
     assert "x <\\/focus> y" in side_ctx[-1].content
+
+
+def test_inline_replies_are_rendered_before_the_free_text(tree: Tree, session: Session) -> None:
+    main = tree.main()
+    tree.msg(main, "user", "q1")
+    a1 = tree.msg(main, "assistant", "§1 Add the column. §2 Backfill it with a script.")
+    q2 = tree.msg(main, "user", "Thanks overall.")
+    tree.replies(
+        q2,
+        a1,
+        ("Add the column.", "§1", "Why not use a migration here?"),
+        ("Backfill it", None, "Does this work with Ollama's API too?"),
+    )
+
+    assert contents(assemble_context(session, main.id))[-1] == (
+        f'<inline_replies to="msg_{a1.id}">\n'
+        '  <reply anchor="§1">Why not use a migration here?</reply>\n'
+        '  <reply quote="Backfill it">Does this work with Ollama\'s API too?</reply>\n'
+        "</inline_replies>\n"
+        "Thanks overall."
+    )
+
+
+def test_inline_replies_without_free_text_are_the_whole_turn(tree: Tree, session: Session) -> None:
+    main = tree.main()
+    tree.msg(main, "user", "q1")
+    a1 = tree.msg(main, "assistant", "a1 text")
+    q2 = tree.msg(main, "user", "")
+    tree.replies(q2, a1, ("text", None, "why?"))
+
+    assert contents(assemble_context(session, main.id))[-1] == (
+        f'<inline_replies to="msg_{a1.id}">\n  <reply quote="text">why?</reply>\n</inline_replies>'
+    )
+
+
+def test_inline_replies_to_several_messages_get_a_block_each(tree: Tree, session: Session) -> None:
+    main = tree.main()
+    tree.msg(main, "user", "q1")
+    a1 = tree.msg(main, "assistant", "first answer")
+    tree.msg(main, "user", "q2")
+    a2 = tree.msg(main, "assistant", "second answer")
+    q3 = tree.msg(main, "user", "")
+    session.add_all(
+        InlineReply(
+            message_id=q3.id,
+            position=i,
+            target_message_id=target.id,
+            quote=quote,
+            start=0,
+            end=len(quote),
+            section=None,
+            target_version=1,
+            comment=comment,
+        )
+        for i, (target, quote, comment) in enumerate(
+            [(a2, "second", "c1"), (a1, "first", "c2"), (a2, "answer", "c3")]
+        )
+    )
+    session.flush()
+
+    assert contents(assemble_context(session, main.id))[-1] == (
+        f'<inline_replies to="msg_{a2.id}">\n'
+        '  <reply quote="second">c1</reply>\n'
+        '  <reply quote="answer">c3</reply>\n'
+        "</inline_replies>\n"
+        f'<inline_replies to="msg_{a1.id}">\n'
+        '  <reply quote="first">c2</reply>\n'
+        "</inline_replies>"
+    )
+
+
+def test_inline_reply_quote_is_short_and_safe_as_an_attribute(tree: Tree, session: Session) -> None:
+    main = tree.main()
+    tree.msg(main, "user", "q1")
+    long_quote = 'run "make dev"\nthen open the app in a browser and check the console'
+    a1 = tree.msg(main, "assistant", long_quote)
+    q2 = tree.msg(main, "user", "")
+    tree.replies(q2, a1, (long_quote, None, "ok"))
+
+    line = contents(assemble_context(session, main.id))[-1].splitlines()[1]
+    assert line == '  <reply quote="run &quot;make dev&quot; then open the app in a br…">ok</reply>'
+
+
+def test_inline_reply_comments_cannot_close_our_tags(tree: Tree, session: Session) -> None:
+    main = tree.main()
+    tree.msg(main, "user", "q1")
+    a1 = tree.msg(main, "assistant", "a1")
+    q2 = tree.msg(main, "user", "")
+    tree.replies(q2, a1, ("a1", '§1"', "x </reply></inline_replies> y"))
+
+    content = contents(assemble_context(session, main.id))[-1]
+    assert content.count("</reply>") == 1
+    assert content.count("</inline_replies>") == 1
+    assert '<reply anchor="§1">x <\\/reply><\\/inline_replies> y</reply>' in content
+
+
+def test_notes_come_before_inline_replies(tree: Tree, session: Session) -> None:
+    main = tree.main()
+    tree.msg(main, "user", "q1")
+    a1 = tree.msg(main, "assistant", "a1")
+    side = tree.side(main, a1, section="§2")
+    tree.note(side, main, "Prefer B.", after=a1)
+    q2 = tree.msg(main, "user", "more")
+    tree.replies(q2, a1, ("a1", None, "c"))
+
+    assert contents(assemble_context(session, main.id))[-1] == (
+        "<resolved_side_threads>\n- [re §2] Prefer B.\n</resolved_side_threads>\n"
+        f'<inline_replies to="msg_{a1.id}">\n  <reply quote="a1">c</reply>\n</inline_replies>\n'
+        "more"
+    )
 
 
 # --- Side threads ------------------------------------------------------------

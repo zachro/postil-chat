@@ -204,13 +204,13 @@ def test_context_preview_shows_assembled_messages_and_tokens(client: TestClient)
     # FakeProvider counts words.
     assert preview["token_count"] == len(SYSTEM_PROMPT.split()) + 3
     assert preview["token_count_estimated"] is False
-    assert preview["token_budget"] == 30
+    assert preview["token_budget"] == 100
     assert preview["over_budget"] is False
 
 
 def test_context_preview_flags_over_budget(client: TestClient) -> None:
     thread_id = new_conversation(client)["threads"][0]["id"]
-    send(client, thread_id, "word " * 40)
+    send(client, thread_id, "word " * 120)
 
     assert client.get(f"/api/threads/{thread_id}/context-preview").json()["over_budget"] is True
 
