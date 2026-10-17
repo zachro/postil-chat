@@ -17,7 +17,7 @@ from app.context import assemble_context
 from app.db import init_db, make_engine
 from app.llm import LLMProvider, Usage, estimate_tokens, get_provider
 from app.merge import merge_thread, summarize_thread
-from app.models import Conversation, Message, MessageVersion, Thread
+from app.models import Conversation, InlineReply, Message, MessageVersion, Thread
 from app.schemas import (
     ContextMessage,
     ContextPreview,
@@ -79,6 +79,24 @@ def create_app(
         if thread.status != "open":
             raise HTTPException(409, f"thread is already {thread.status}")
 
+    def check_anchor(message: Message | None, quote: str, start: int, end: int) -> Message:
+        """The assistant message an anchor points into, if the anchor matches it."""
+        if message is None:
+            raise HTTPException(404, "message not found")
+        if message.role != "assistant":
+            raise HTTPException(422, "anchors point into assistant messages")
+        if not (start < end <= len(message.content)):
+            raise HTTPException(422, "anchor offsets are out of range")
+        if message.content[start:end] != quote:
+            raise HTTPException(422, "quote does not match the message at those offsets")
+        return message
+
+    def latest_version(session: Session, message_id: int) -> int:
+        version = session.scalar(
+            select(func.max(MessageVersion.version)).where(MessageVersion.message_id == message_id)
+        )
+        return version or 1
+
     def thread_depth(thread: Thread) -> int:
         depth = 0
         while thread.parent_thread is not None:
@@ -127,22 +145,11 @@ def create_app(
         The first question is sent afterwards via POST /threads/{id}/messages,
         so it streams like any other turn.
         """
-        message = session.get(Message, message_id)
-        if message is None:
-            raise HTTPException(404, "message not found")
-        if message.role != "assistant":
-            raise HTTPException(422, "side threads anchor to assistant messages")
-        if not (body.start < body.end <= len(message.content)):
-            raise HTTPException(422, "anchor offsets are out of range")
-        if message.content[body.start : body.end] != body.quote:
-            raise HTTPException(422, "quote does not match the message at those offsets")
+        message = check_anchor(session.get(Message, message_id), body.quote, body.start, body.end)
         parent = message.thread
         if thread_depth(parent) >= MAX_SIDE_THREAD_DEPTH:
             raise HTTPException(422, f"side threads nest at most {MAX_SIDE_THREAD_DEPTH} deep")
 
-        version = session.scalar(
-            select(func.max(MessageVersion.version)).where(MessageVersion.message_id == message_id)
-        )
         thread = Thread(
             conversation_id=parent.conversation_id,
             kind="side",
@@ -152,7 +159,7 @@ def create_app(
             anchor_start=body.start,
             anchor_end=body.end,
             anchor_section=body.section,
-            anchor_version=version or 1,
+            anchor_version=latest_version(session, message_id),
             context_mode=body.context_mode,
         )
         session.add(thread)
@@ -218,6 +225,24 @@ def create_app(
         model_id = body.model or thread_model(thread)
         if model_id not in settings.models:
             raise HTTPException(422, f"unknown model {model_id!r}")
+        replies = []
+        for i, r in enumerate(body.inline_replies):
+            target = session.get(Message, r.target_message_id)
+            if target is None or target.thread_id != thread_id:
+                raise HTTPException(422, "inline replies point into this thread's own messages")
+            check_anchor(target, r.quote, r.start, r.end)
+            replies.append(
+                InlineReply(
+                    position=i,
+                    target_message_id=target.id,
+                    quote=r.quote,
+                    start=r.start,
+                    end=r.end,
+                    section=r.section,
+                    target_version=latest_version(session, target.id),
+                    comment=r.comment,
+                )
+            )
         thread.model = model_id
 
         position = session.scalar(
@@ -225,10 +250,14 @@ def create_app(
         )
         assert position is not None
         user_message = Message(
-            thread_id=thread_id, position=position, role="user", content=body.content
+            thread_id=thread_id,
+            position=position,
+            role="user",
+            content=body.content,
+            inline_replies=replies,
         )
         session.add(user_message)
-        if position == 0 and thread.kind == "main":
+        if position == 0 and thread.kind == "main" and body.content.strip():
             conversation = thread.conversation
             if conversation.title == DEFAULT_TITLE:
                 conversation.title = body.content.strip().splitlines()[0][:80]

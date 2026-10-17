@@ -76,6 +76,9 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     thread: Mapped[Thread] = relationship(back_populates="messages", foreign_keys=[thread_id])
+    inline_replies: Mapped[list["InlineReply"]] = relationship(
+        foreign_keys="InlineReply.message_id", order_by="InlineReply.position"
+    )
 
 
 class MessageVersion(Base):
@@ -108,3 +111,23 @@ class MergeNote(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     thread: Mapped[Thread] = relationship(back_populates="merge_notes", foreign_keys=[thread_id])
+
+
+class InlineReply(Base):
+    """One comment of a multi-anchor reply: a user message's comment on a span of an
+    assistant message (CLAUDE.md section 5). The user message's content holds only
+    the free text the user added to the batch; context.py renders the comments."""
+
+    __tablename__ = "inline_replies"
+    __table_args__ = (UniqueConstraint("message_id", "position"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("messages.id"))  # the user message
+    position: Mapped[int]  # 0-based order within the batch
+    target_message_id: Mapped[int] = mapped_column(ForeignKey("messages.id"))
+    quote: Mapped[str] = mapped_column(Text)
+    start: Mapped[int]
+    end: Mapped[int]
+    section: Mapped[str | None] = mapped_column(String(20))
+    target_version: Mapped[int]  # target message version the anchor was made against
+    comment: Mapped[str] = mapped_column(Text)
