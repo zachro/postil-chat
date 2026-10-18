@@ -1,10 +1,16 @@
 import pytest
 from sqlalchemy.orm import Session
 
-from app.context import assemble_context, assemble_summary_context
+from app.context import (
+    assemble_context,
+    assemble_revision_context,
+    assemble_summary_context,
+    pending_revision_notes,
+)
 from app.llm.base import ChatMessage
 from app.models import Conversation, InlineReply, MergeNote, Message, MessageVersion, Thread
 from app.prompts import (
+    REVISE_INSTRUCTION,
     SIDE_THREAD_INSTRUCTION,
     SUMMARIZE_REQUEST,
     SUMMARIZER_PROMPT,
@@ -684,3 +690,99 @@ def test_nested_side_thread_marks_every_inherited_prefix(tree: Tree, session: Se
     tree.msg(nested, "user", "nq")
 
     assert breakpoints(assemble_context(session, nested.id)) == ["a1", "sa1"]
+
+
+# --- Revise-in-place ------------------------------------------------------------
+
+
+def revise_request(notes: str) -> ChatMessage:
+    return ChatMessage(
+        "user",
+        f"<resolved_side_threads>\n{notes}\n</resolved_side_threads>\n"
+        f"<revise>\n{REVISE_INSTRUCTION}\n</revise>",
+    )
+
+
+def test_revision_is_history_through_the_message_then_its_notes(
+    tree: Tree, session: Session
+) -> None:
+    main = tree.main()
+    tree.msg(main, "user", "q1")
+    a1 = tree.msg(main, "assistant", "§1 Add the column. §2 Backfill it.")
+    side = tree.side(main, a1, section="§2")
+    other = tree.side(main, a1, quote="Add the column.")
+    tree.note(side, main, "User runs Postgres 16.", after=a1)
+    tree.note(other, main, "Use Alembic.", after=a1)
+    tree.msg(main, "user", "q2")
+    tree.msg(main, "assistant", "a2")
+
+    context = assemble_revision_context(session, a1.id)
+
+    assert context == [
+        SYSTEM,
+        ChatMessage("user", "q1"),
+        ChatMessage("assistant", a1.content, cache_breakpoint=True),
+        revise_request('- [re §2] User runs Postgres 16.\n- [re "Add the column."] Use Alembic.'),
+    ]
+
+
+def test_revision_ignores_unmerged_threads_and_other_messages(tree: Tree, session: Session) -> None:
+    main = tree.main()
+    tree.msg(main, "user", "q1")
+    a1 = tree.msg(main, "assistant", "a1")
+    tree.msg(main, "user", "q2")
+    a2 = tree.msg(main, "assistant", "a2")
+    tree.side(main, a1)  # open, nothing merged
+    elsewhere = tree.side(main, a2, section="§1")
+    tree.note(elsewhere, main, "About a2.", after=a2)
+    unapproved = tree.side(main, a1, section="§3")
+    tree.note(unapproved, main, "Draft.", after=a2, approved=False)
+
+    assert pending_revision_notes(session, a1) == []
+    with pytest.raises(ValueError, match="no merged side threads"):
+        assemble_revision_context(session, a1.id)
+    assert [n.note_text for n in pending_revision_notes(session, a2)] == ["About a2."]
+
+
+def test_notes_already_in_a_revision_are_not_pending(tree: Tree, session: Session) -> None:
+    main = tree.main()
+    tree.msg(main, "user", "q1")
+    a1 = tree.msg(main, "assistant", "a1")
+    first = tree.side(main, a1, section="§1")
+    tree.note(first, main, "Applied already.", after=a1)
+    tree.revise(a1, "a1 revised", version=2)
+    second = tree.side(main, a1, section="§2")
+    tree.note(second, main, "New conclusion.", after=a1)
+
+    assert [n.note_text for n in pending_revision_notes(session, a1)] == ["New conclusion."]
+    context = assemble_revision_context(session, a1.id)
+    assert context[-2] == ChatMessage("assistant", "a1 revised", cache_breakpoint=True)
+    assert context[-1] == revise_request("- [re §2] New conclusion.")
+
+
+def test_revision_of_a_side_thread_reply_keeps_its_inherited_prefix(
+    tree: Tree, session: Session
+) -> None:
+    main = tree.main()
+    tree.msg(main, "user", "q1")
+    a1 = tree.msg(main, "assistant", "a1")
+    side = tree.side(main, a1, quote="a1")
+    tree.msg(side, "user", "sq")
+    sa = tree.msg(side, "assistant", "sa")
+    nested = tree.side(side, sa, quote="sa")
+    tree.note(nested, side, "Nested conclusion.", after=sa)
+
+    context = assemble_revision_context(session, sa.id)
+
+    assert [m.content for m in context[1:3]] == ["q1", "a1"]
+    assert context[-2] == ChatMessage("assistant", "sa", cache_breakpoint=True)
+    assert context[-1] == revise_request('- [re "sa"] Nested conclusion.')
+
+
+def test_only_assistant_messages_are_revised(tree: Tree, session: Session) -> None:
+    main = tree.main()
+    q1 = tree.msg(main, "user", "q1")
+    with pytest.raises(ValueError, match="assistant"):
+        assemble_revision_context(session, q1.id)
+    with pytest.raises(LookupError):
+        assemble_revision_context(session, 9999)
