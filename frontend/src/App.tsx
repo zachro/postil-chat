@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChatPane, type MergeMarker } from './components/ChatPane'
 import { ConversationList } from './components/ConversationList'
 import { MergeNoteDialog } from './components/MergeNoteDialog'
+import { MessageFooter } from './components/MessageFooter'
+import { RevisionDialog, type AnchorRef } from './components/RevisionDialog'
+import { VersionHistoryDialog } from './components/VersionHistoryDialog'
 import type { MessageAnchor } from './components/MessageView'
 import { SidePanel, SideThreadHeader } from './components/SidePanel'
 import { locateAnchor, type SourceAnchor } from './lib/anchors'
@@ -9,6 +12,7 @@ import { shorten } from './lib/format'
 import {
   createConversation,
   createSideThread,
+  createVersion,
   getConversation,
   getModels,
   listConversations,
@@ -54,6 +58,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string | null>(null)
   const draftCounter = useRef(0)
   const [resolving, setResolving] = useState<number | null>(null) // thread id in the merge dialog
+  const [revising, setRevising] = useState<number | null>(null) // message id in the revision dialog
+  const [history, setHistory] = useState<number | null>(null) // message id in the history dialog
   const [error, setError] = useState<string | null>(null)
 
   const refreshList = useCallback(async () => {
@@ -65,6 +71,8 @@ export default function App() {
     setPaneKey((k) => k + 1)
     setTabs([])
     setResolving(null)
+    setRevising(null)
+    setHistory(null)
   }, [])
 
   function startNew() {
@@ -72,6 +80,8 @@ export default function App() {
     setPaneKey((k) => k + 1)
     setTabs([])
     setResolving(null)
+    setRevising(null)
+    setHistory(null)
   }
 
   useEffect(() => {
@@ -113,6 +123,57 @@ export default function App() {
       messages: [...t.messages.filter((m) => m.position !== message.position), message],
     }))
   }
+
+  function replaceMessage(message: Message) {
+    updateThreadState(message.thread_id, (t) => ({
+      ...t,
+      messages: t.messages.map((m) => (m.id === message.id ? message : m)),
+    }))
+  }
+
+  const messageById = (id: number | null) => threads.flatMap((t) => t.messages).find((m) => m.id === id)
+
+  /** Merged side threads anchored to a reply whose notes are newer than its current version. */
+  function pendingNotes(message: Message): number {
+    const since = Date.parse(message.version_created_at)
+    return threads.filter(
+      (t) => t.anchor_message_id === message.id && t.merge_note && Date.parse(t.merge_note.created_at) > since,
+    ).length
+  }
+
+  /** Side threads and sent comments anchored to a reply, for the revision dialog's detach warning. */
+  function anchorRefs(message: Message): AnchorRef[] {
+    const label = (section: string | null, quote: string) => section ?? `"${shorten(quote, NOTE_LABEL_CHARS)}"`
+    const fromThreads = threads
+      .filter((t) => t.anchor_message_id === message.id && t.anchor_quote !== null)
+      .map((t) => ({
+        quote: t.anchor_quote!,
+        start: t.anchor_start ?? 0,
+        end: t.anchor_end ?? 0,
+        label: `thread ${label(t.anchor_section, t.anchor_quote!)}`,
+      }))
+    const fromComments = threads
+      .flatMap((t) => t.messages)
+      .flatMap((m) => m.inline_replies)
+      .filter((r) => r.target_message_id === message.id)
+      .map((r) => ({ ...r, label: `comment ${label(r.section, r.quote)}` }))
+    return [...fromThreads, ...fromComments]
+  }
+
+  function messageFooter(message: Message) {
+    return (
+      <MessageFooter
+        version={message.version}
+        pendingNotes={pendingNotes(message)}
+        canRevise={threadById(message.thread_id)?.status === 'open'}
+        onRevise={() => setRevising(message.id)}
+        onHistory={() => setHistory(message.id)}
+      />
+    )
+  }
+
+  // Changes when any reply is revised, so token counts refresh without new messages.
+  const versionKey = threads.flatMap((t) => t.messages.map((m) => m.version)).join(',')
 
   function resolveModel(thread: Thread | undefined): string {
     for (let t = thread; t; t = threadById(t.parent_thread_id)) {
@@ -244,6 +305,7 @@ export default function App() {
         onReplyFinished={() => {}}
         anchorsFor={anchorsFor}
         notesAfter={notesAfter}
+        messageFooter={messageFooter}
         onOpenThread={openThread}
         onReplyInline={
           thread && thread.status === 'open' && depth(thread) < MAX_DEPTH
@@ -269,7 +331,7 @@ export default function App() {
           />
         }
         emptyText="Ask about the highlighted text."
-        refreshKey={thread?.context_mode}
+        refreshKey={`${thread?.context_mode}:${versionKey}`}
       />
     )
   }
@@ -308,6 +370,8 @@ export default function App() {
         onReplyFinished={() => refreshList().catch(() => {})}
         anchorsFor={anchorsFor}
         notesAfter={notesAfter}
+        messageFooter={messageFooter}
+        refreshKey={versionKey}
         onOpenThread={openThread}
         onReplyInline={mainThread ? (id, anchor) => replyInline(mainThread, id, anchor) : undefined}
       />
@@ -327,6 +391,29 @@ export default function App() {
           onMerge={async (note) => replaceThread(await mergeThread(resolving, note))}
           onResolve={() => setStatus(resolving, 'resolved')}
           onClose={() => setResolving(null)}
+        />
+      )}
+      {revising !== null && messageById(revising) && (
+        <RevisionDialog
+          message={messageById(revising)!}
+          anchors={anchorRefs(messageById(revising)!)}
+          onAccept={async (content, reason) => {
+            const base = messageById(revising)!.version
+            replaceMessage(await createVersion(revising, { content, reason, base_version: base }))
+          }}
+          onClose={() => setRevising(null)}
+        />
+      )}
+      {history !== null && (
+        <VersionHistoryDialog
+          messageId={history}
+          onRestore={async (v) => {
+            const base = messageById(history)?.version
+            replaceMessage(
+              await createVersion(history, { content: v.content, reason: `Restored v${v.version}`, base_version: base }),
+            )
+          }}
+          onClose={() => setHistory(null)}
         />
       )}
     </div>

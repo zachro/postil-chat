@@ -751,3 +751,130 @@ button.primary {
   font-size: 0.75em;
   text-align: right;
 }
+
+/* Revise-in-place and versions */
+
+.message-footer {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+  font-size: 0.85em;
+}
+
+button.link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--fg-muted);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+button.link:hover {
+  color: var(--accent);
+}
+
+.revision-dialog,
+.history-dialog {
+  width: min(860px, 92vw);
+}
+
+.revision-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.revision-tabs button[aria-selected='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.revision-dialog textarea {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 0.85em;
+}
+
+.revision-stream,
+.diff {
+  max-height: 55vh;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 0.82em;
+  white-space: pre-wrap;
+}
+
+.revision-stream {
+  padding: 8px 12px;
+}
+
+.diff > div {
+  padding: 0 12px 0 6px;
+}
+
+.diff-sign {
+  display: inline-block;
+  width: 1.4em;
+  color: var(--fg-muted);
+  user-select: none;
+}
+
+.diff-add {
+  background: color-mix(in srgb, var(--ok) 18%, transparent);
+}
+
+.diff-del {
+  background: color-mix(in srgb, var(--error) 16%, transparent);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--error) 50%, transparent);
+}
+
+.diff-skip {
+  color: var(--fg-muted);
+  font-style: italic;
+}
+
+.revision-detaching {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--warn);
+  background: var(--bg-subtle);
+  font-size: 0.85em;
+}
+
+.history-body {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 12px;
+}
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.history-list button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  margin-bottom: 4px;
+  text-align: left;
+  background: none;
+}
+
+.history-list button[aria-current='true'] {
+  border-color: var(--accent);
+  background: var(--bg-subtle);
+}
+
+.history-view {
+  min-width: 0;
+}

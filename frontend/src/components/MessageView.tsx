@@ -1,4 +1,4 @@
-import { useMemo, type MouseEvent } from 'react'
+import { useMemo, type MouseEvent, type ReactNode } from 'react'
 import Markdown from 'react-markdown'
 import {
   commentKey,
@@ -35,10 +35,11 @@ interface Props {
   anchors?: MessageAnchor[]
   inlineReplies?: InlineReply[] // a user message's multi-anchor comments
   onOpenThread?(threadId: number): void
+  footer?: ReactNode
 }
 
 export function MessageView(props: Props) {
-  const { role, content, messageId, error, streaming, anchors, inlineReplies, onOpenThread } = props
+  const { role, content, messageId, error, streaming, anchors, inlineReplies, onOpenThread, footer } = props
 
   const plugins = useMemo(() => {
     const highlights: Highlight[] = []
@@ -108,6 +109,7 @@ export function MessageView(props: Props) {
           {error === 'cancelled' ? 'Stopped.' : `Generation failed: ${error}`}
         </div>
       )}
+      {footer}
     </article>
   )
 }
