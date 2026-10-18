@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { rangeToAnchor, type SourceAnchor } from '../lib/anchors'
+import { commentKey, rangeToAnchor, sectionOf, type SourceAnchor } from '../lib/anchors'
 import {
   getContextPreview,
   sendMessage,
@@ -9,6 +9,7 @@ import {
   type ModelInfo,
   type Thread,
 } from '../lib/api'
+import { CommentTray, type PendingComment } from './CommentTray'
 import { Composer } from './Composer'
 import { ContextMeter } from './ContextMeter'
 import { MessageView, type MessageAnchor } from './MessageView'
@@ -60,6 +61,9 @@ export function ChatPane(props: Props) {
   const [preview, setPreview] = useState<ContextPreview | null>(null)
   const [pendingReply, setPendingReply] = useState<PendingReply | null>(null)
   const [lastUsage, setLastUsage] = useState<Usage | null>(null)
+  const [comments, setComments] = useState<PendingComment[]>([]) // multi-anchor reply tray
+  const commentCounter = useRef(0)
+  const canComment = thread !== null && !closedNotice
   const threadId = thread?.id
   const idle = draft === null
 
@@ -83,9 +87,9 @@ export function ChatPane(props: Props) {
     return () => document.removeEventListener('selectionchange', clearIfCollapsed)
   }, [])
 
-  /** After a selection inside an assistant message, offer "Reply inline" next to it. */
+  /** After a selection inside an assistant message, offer "Reply inline" / "Add comment" next to it. */
   function onMouseUp() {
-    if (!onReplyInline) return
+    if (!onReplyInline && !canComment) return
     requestAnimationFrame(() => {
       const selection = window.getSelection()
       if (!selection || selection.isCollapsed || !selection.rangeCount) return setPendingReply(null)
@@ -100,6 +104,7 @@ export function ChatPane(props: Props) {
           ? rangeToAnchor(root, range, message.content)
           : null
       if (!message || !anchor) return setPendingReply(null)
+      anchor.section = sectionOf(message.content, anchor.start, anchor.end)
       const rect = range.getBoundingClientRect()
       setPendingReply({ messageId: message.id, anchor, x: rect.right, y: rect.bottom })
     })
@@ -110,6 +115,29 @@ export function ChatPane(props: Props) {
     onReplyInline(pendingReply.messageId, pendingReply.anchor)
     window.getSelection()?.removeAllRanges()
     setPendingReply(null)
+  }
+
+  function addComment() {
+    if (!pendingReply) return
+    const { messageId, anchor } = pendingReply
+    setComments((prev) => [...prev, { key: ++commentCounter.current, messageId, anchor, text: '' }])
+    window.getSelection()?.removeAllRanges()
+    setPendingReply(null)
+  }
+
+  /** Side threads, pending comments, and comments already sent in this thread. */
+  function anchorsOf(messageId: number): MessageAnchor[] {
+    const pending = comments
+      .filter((c) => c.messageId === messageId)
+      .map((c) => ({ ...c.anchor, threadId: null, count: 0 }))
+    const sent = messages.flatMap((m) =>
+      m.inline_replies.flatMap((r, i) =>
+        r.target_message_id === messageId
+          ? [{ ...r, threadId: null, count: 0, comment: { key: commentKey(m.id, i), text: r.comment } }]
+          : [],
+      ),
+    )
+    return [...(anchorsFor?.(messageId) ?? []), ...pending, ...sent]
   }
 
   useLayoutEffect(() => {
@@ -134,14 +162,22 @@ export function ChatPane(props: Props) {
     let threadId = thread?.id
     try {
       threadId ??= await createThread()
+      const inline_replies = comments.map((c) => ({
+        target_message_id: c.messageId,
+        quote: c.anchor.quote,
+        start: c.anchor.start,
+        end: c.anchor.end,
+        section: c.anchor.section ?? null,
+        comment: c.text.trim(),
+      }))
       await sendMessage(
         threadId,
-        content,
-        model,
+        { content, model, inline_replies },
         {
           onUserMessage(message) {
             lastPosition = message.position
             onAppend(message)
+            setComments([]) // saved with the message; only now is it safe to drop them
           },
           onDelta(delta) {
             text += delta
@@ -167,6 +203,7 @@ export function ChatPane(props: Props) {
           token_count: null,
           error: 'cancelled',
           created_at: new Date().toISOString(),
+          inline_replies: [],
         })
       } else {
         setError(String(e))
@@ -193,7 +230,8 @@ export function ChatPane(props: Props) {
                 content={m.content}
                 error={m.error}
                 messageId={m.id > 0 ? m.id : undefined} // negative ids are local placeholders
-                anchors={anchorsFor?.(m.id)}
+                anchors={anchorsOf(m.id)}
+                inlineReplies={m.inline_replies}
                 onOpenThread={onOpenThread}
               />
               {notesAfter?.(m.id).map((note) => (
@@ -232,21 +270,40 @@ export function ChatPane(props: Props) {
             onSend={send}
             onStop={() => abortRef.current?.abort()}
             status={<ContextMeter preview={preview} lastUsage={lastUsage} />}
+            tray={
+              <CommentTray
+                comments={comments}
+                onChange={(key, text) => setComments((prev) => prev.map((c) => (c.key === key ? { ...c, text } : c)))}
+                onRemove={(key) => setComments((prev) => prev.filter((c) => c.key !== key))}
+              />
+            }
+            canSendEmpty={comments.length > 0}
+            blocked={
+              comments.some((c) => !c.text.trim()) ? 'Write each comment or remove it before sending' : undefined
+            }
           />
         )}
       </div>
       {pendingReply && (
-        <button
-          className="reply-inline primary"
+        <div
+          className="reply-inline"
           style={{
-            left: Math.min(pendingReply.x, window.innerWidth - 130),
+            left: Math.min(pendingReply.x, window.innerWidth - 240),
             top: Math.min(pendingReply.y + 6, window.innerHeight - 40),
           }}
           onMouseDown={(e) => e.preventDefault()} // keep the selection while clicking
-          onClick={replyInline}
         >
-          Reply inline
-        </button>
+          {onReplyInline && (
+            <button className="primary" onClick={replyInline}>
+              Reply inline
+            </button>
+          )}
+          {canComment && (
+            <button onClick={addComment} title="Collect comments on several parts and send them as one message">
+              Add comment
+            </button>
+          )}
+        </div>
       )}
     </main>
   )

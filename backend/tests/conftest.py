@@ -41,7 +41,7 @@ def settings(tmp_path: Path) -> Settings:
         {
             "database_path": "test.db",
             "default_model": "fake",
-            "token_budget": 30,
+            "token_budget": 100,  # above the system prompt alone (FakeProvider counts words)
             "models": [
                 {"id": "fake", "label": "Fake", "provider": "fake", "model": "fake-1"},
                 {

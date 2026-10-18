@@ -5,6 +5,7 @@ import { MergeNoteDialog } from './components/MergeNoteDialog'
 import type { MessageAnchor } from './components/MessageView'
 import { SidePanel, SideThreadHeader } from './components/SidePanel'
 import { locateAnchor, type SourceAnchor } from './lib/anchors'
+import { shorten } from './lib/format'
 import {
   createConversation,
   createSideThread,
@@ -41,11 +42,6 @@ interface Tab {
 }
 
 const mainThreadOf = (c: Conversation | null) => c?.threads.find((t) => t.kind === 'main')
-
-function shorten(text: string, max: number): string {
-  const flat = text.replace(/\s+/g, ' ').trim()
-  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
-}
 
 export default function App() {
   const [models, setModels] = useState<ModelsResponse | null>(null)

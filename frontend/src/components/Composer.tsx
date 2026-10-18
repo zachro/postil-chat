@@ -9,19 +9,24 @@ interface Props {
   onSend(content: string): void
   onStop(): void
   status?: ReactNode // shown between the model picker and the send button
+  tray?: ReactNode // pending inline comments, shown above the text box
+  canSendEmpty?: boolean // the tray alone makes a message
+  blocked?: string // why sending is disabled right now, if it is
 }
 
-export function Composer({ models, model, onModelChange, streaming, onSend, onStop, status }: Props) {
+export function Composer(props: Props) {
+  const { models, model, onModelChange, streaming, onSend, onStop, status, tray, canSendEmpty, blocked } = props
   const [text, setText] = useState('')
+  const canSend = !streaming && !blocked && (canSendEmpty || !!text.trim())
 
   function send() {
-    const content = text.trim()
-    if (!content || streaming) return
-    onSend(content)
+    if (!canSend) return
+    onSend(text.trim())
     setText('')
   }
 
-  function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+  // On the wrapper, so Ctrl+Enter also sends from the tray's comment boxes.
+  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault()
       send()
@@ -29,12 +34,12 @@ export function Composer({ models, model, onModelChange, streaming, onSend, onSt
   }
 
   return (
-    <div className="composer">
+    <div className="composer" onKeyDown={onKeyDown}>
+      {tray}
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
-        onKeyDown={onKeyDown}
-        placeholder="Message (Ctrl+Enter to send)"
+        placeholder={canSendEmpty ? 'Add a message to your comments (optional)' : 'Message (Ctrl+Enter to send)'}
         rows={3}
         autoFocus
       />
@@ -50,7 +55,7 @@ export function Composer({ models, model, onModelChange, streaming, onSend, onSt
         {streaming ? (
           <button onClick={onStop}>Stop</button>
         ) : (
-          <button className="primary" onClick={send} disabled={!text.trim()}>
+          <button className="primary" onClick={send} disabled={!canSend} title={blocked}>
             Send
           </button>
         )}

@@ -4,7 +4,12 @@
 // - rehypeSourceMap: a rehype plugin that wraps every rendered text run whose
 //   text appears verbatim in the source in <span data-s={sourceOffset}>, and
 //   splits those runs to draw highlights (and reply-count badges) for anchors.
-// - rangeToAnchor: maps a DOM selection back to source offsets via those spans.
+// - rangeToAnchor: maps a DOM selection back to source offsets via those spans
+//   (sourceToRange goes the other way).
+//
+// Section labels (§1, §2, ...) at the start of a line are found in the source
+// and rendered as gutter spans; they are an optimization only, so an anchor
+// without one still works by its quote.
 //
 // Text that cannot be found verbatim in the source (e.g. HTML entities) is left
 // unmapped: it is not highlightable, and selections simply skip over it.
@@ -15,11 +20,13 @@ export interface SourceAnchor {
   start: number
   end: number
   quote: string
+  section?: string | null // label of the section the span falls in, if any
 }
 
 /**
- * A source span to highlight. threadId null marks a draft thread (no badge yet);
- * closed marks a resolved or merged thread (drawn muted).
+ * A source span to highlight. threadId null marks a draft (no badge yet) or,
+ * with `comment`, a sent multi-anchor comment; closed marks a resolved or merged
+ * thread (drawn muted).
  */
 export interface Highlight {
   start: number
@@ -27,6 +34,42 @@ export interface Highlight {
   threadId: number | null
   count: number
   closed?: boolean
+  comment?: { key: string; text: string }
+}
+
+/** Key shared by a sent comment's card (in the user message) and its highlight. */
+export const commentKey = (messageId: number, index: number) => `${messageId}-${index}`
+
+/** A section label in the source: `label` is e.g. "§2"; [start, end) also covers a trailing "." ":" or ")". */
+export interface SectionLabel {
+  label: string
+  start: number
+  end: number
+}
+
+// Line start, then any heading/list/quote markers and an opening emphasis marker.
+const SECTION_LINE = /^[ \t]*(?:(?:#{1,6}|[-*+]|\d+[.)]|>)[ \t]+)*(?:\*\*|__|\*|_)?(§\d+)[.:)]?/gm
+
+export function findSections(source: string): SectionLabel[] {
+  return [...source.matchAll(SECTION_LINE)].map((m) => {
+    const start = m.index + m[0].length - m[0].slice(m[0].indexOf('§')).length
+    return { label: m[1], start, end: m.index + m[0].length }
+  })
+}
+
+/** The section a source span falls in: the last label at or before it, unless it crosses another. */
+export function sectionOf(source: string, start: number, end: number): string | null {
+  const labels = findSections(source)
+  if (labels.some((l) => l.start > start && l.start < end)) return null
+  return labels.findLast((l) => l.start <= start)?.label ?? null
+}
+
+/** The source span of the section whose label starts at `labelStart`: up to the next label's line. */
+export function sectionSpan(source: string, labelStart: number): Span {
+  const next = findSections(source).find((l) => l.start > labelStart)
+  let end = next ? source.lastIndexOf('\n', next.start) + 1 : source.length
+  while (end > labelStart && /\s/.test(source[end - 1])) end--
+  return [labelStart, end]
 }
 
 interface Segment {
@@ -68,7 +111,8 @@ export function mapText(
 }
 
 export function rehypeSourceMap(options: { source: string; highlights?: Highlight[] }) {
-  return (tree: Root) => annotate(tree, options.source, options.highlights ?? [])
+  return (tree: Root) =>
+    annotate(tree, options.source, options.highlights ?? [], findSections(options.source))
 }
 
 type Parent = Root | Element
@@ -80,7 +124,7 @@ interface Piece {
   end: number
 }
 
-function annotate(tree: Root, source: string, highlights: Highlight[]): void {
+function annotate(tree: Root, source: string, highlights: Highlight[], labels: SectionLabel[]): void {
   const pieces: Piece[] = []
   let cursor = 0
 
@@ -101,8 +145,8 @@ function annotate(tree: Root, source: string, highlights: Highlight[]): void {
           out.push(text(segment.text))
           continue
         }
-        for (const piece of splitByHighlights(segment.text, segment.start, highlights)) {
-          const node = sourceSpan(piece.text, piece.start, piece.highlights)
+        for (const piece of split(segment.text, segment.start, highlights, labels)) {
+          const node = sourceSpan(piece)
           out.push(node)
           pieces.push({ node, parent, start: piece.start, end: piece.start + piece.text.length })
         }
@@ -122,30 +166,55 @@ function annotate(tree: Root, source: string, highlights: Highlight[]): void {
   }
 }
 
-function splitByHighlights(value: string, start: number, highlights: Highlight[]) {
+interface SplitPiece {
+  text: string
+  start: number
+  highlights: Highlight[]
+  label: SectionLabel | undefined
+}
+
+/** Cut a mapped run at every highlight and section-label boundary inside it. */
+function split(value: string, start: number, highlights: Highlight[], labels: SectionLabel[]): SplitPiece[] {
   const end = start + value.length
   const cuts = new Set([start, end])
-  for (const h of highlights) {
-    if (h.start > start && h.start < end) cuts.add(h.start)
-    if (h.end > start && h.end < end) cuts.add(h.end)
+  for (const { start: s, end: e } of [...highlights, ...labels]) {
+    if (s > start && s < end) cuts.add(s)
+    if (e > start && e < end) cuts.add(e)
   }
   const sorted = [...cuts].sort((a, b) => a - b)
   return sorted.slice(0, -1).map((from, i) => {
     const to = sorted[i + 1]
-    const covering = highlights.filter((h) => h.start < to && h.end > from)
-    return { text: value.slice(from - start, to - start), start: from, highlights: covering }
+    return {
+      text: value.slice(from - start, to - start),
+      start: from,
+      highlights: highlights.filter((h) => h.start < to && h.end > from),
+      label: labels.find((l) => l.start <= from && l.end >= to),
+    }
   })
 }
 
-function sourceSpan(value: string, start: number, highlights: Highlight[]): Element {
+function sourceSpan({ text: value, start, highlights, label }: SplitPiece): Element {
   const properties: Element['properties'] = { dataS: start }
-  if (highlights.length) {
-    const className = ['anchor']
-    if (highlights.every((h) => h.threadId === null)) className.push('anchor-draft')
-    else if (highlights.every((h) => h.closed)) className.push('anchor-closed')
-    properties.className = className
-    properties.dataThreads = highlights.map((h) => h.threadId ?? 'draft').join(' ')
+  const className = []
+  if (label) {
+    className.push('section-label')
+    properties.dataSectionStart = label.start
+    properties.title = `Select ${label.label}`
   }
+  if (highlights.length) {
+    className.push('anchor')
+    const comments = highlights.filter((h) => h.comment)
+    const threadIds = highlights.flatMap((h) => (h.threadId === null ? [] : [h.threadId]))
+    if (comments.length === highlights.length) className.push('anchor-comment')
+    else if (!threadIds.length) className.push('anchor-draft')
+    else if (highlights.every((h) => h.closed)) className.push('anchor-closed')
+    if (threadIds.length) properties.dataThreads = threadIds.join(' ')
+    if (comments.length) {
+      properties.dataComment = comments[0].comment!.key
+      if (!label) properties.title = comments.map((h) => h.comment!.text).join('\n\n')
+    }
+  }
+  if (className.length) properties.className = className
   return { type: 'element', tagName: 'span', properties, children: [text(value)] }
 }
 
@@ -192,6 +261,26 @@ export function rangeToAnchor(root: Node, range: Range, source: string): SourceA
   while (start < end && /\s/.test(source[start])) start++
   while (end > start && /\s/.test(source[end - 1])) end--
   return start < end ? { start, end, quote: source.slice(start, end) } : null
+}
+
+/** A DOM range over the rendered text of the source span [start, end), or null if none of it is rendered. */
+export function sourceToRange(root: Node, start: number, end: number): Range | null {
+  const doc = root.ownerDocument ?? document
+  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  let range: Range | null = null
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const offset = (node.parentNode as HTMLElement | null)?.dataset?.s
+    if (offset === undefined) continue
+    const from = Number(offset)
+    const to = from + (node.textContent?.length ?? 0)
+    if (to <= start || from >= end) continue
+    if (!range) {
+      range = doc.createRange()
+      range.setStart(node, Math.max(start - from, 0))
+    }
+    range.setEnd(node, Math.min(end, to) - from)
+  }
+  return range
 }
 
 /**

@@ -371,8 +371,125 @@ button.primary {
 .reply-inline {
   position: fixed;
   z-index: 10;
+  display: flex;
+  gap: 4px;
   font-size: 0.85em;
+}
+
+.reply-inline button {
   box-shadow: 0 2px 8px rgb(0 0 0 / 0.2);
+}
+
+/* Section labels (§1, §2, ...) sit in a gutter left of the text. Absolute
+   positioning with no `top` keeps each label on its own line. */
+
+.markdown {
+  position: relative;
+}
+
+.markdown.has-sections {
+  padding-left: 2.4em;
+}
+
+.section-label {
+  position: absolute;
+  left: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.6rem;
+  padding: 0 4px;
+  border-radius: 4px;
+  color: var(--fg-muted);
+  background: var(--bg-subtle);
+  cursor: pointer;
+  user-select: none;
+}
+
+.section-label:hover {
+  color: var(--accent);
+}
+
+/* Multi-anchor replies */
+
+.anchor-comment {
+  background: none;
+  cursor: default;
+  text-decoration: underline 2px var(--accent);
+  text-underline-offset: 3px;
+}
+
+.anchor-comment.flash {
+  animation: flash 1.5s ease-out;
+}
+
+@keyframes flash {
+  from {
+    background: var(--highlight-active);
+  }
+}
+
+.inline-replies {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  white-space: normal;
+}
+
+.inline-replies li {
+  margin-bottom: 4px;
+}
+
+.inline-reply-anchor {
+  margin-right: 6px;
+  padding: 0 6px;
+  font-size: 0.8em;
+  color: var(--accent);
+  background: var(--bg);
+}
+
+.comment-tray {
+  list-style: none;
+  margin: 0;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.comment-tray li {
+  margin-bottom: 6px;
+  border-left: 3px solid var(--accent);
+  padding-left: 8px;
+}
+
+.comment-tray-quote {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-muted);
+  font-size: 0.85em;
+}
+
+.comment-tray-quote > span:not(.comment-tray-section) {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.comment-tray-section {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.comment-tray-remove {
+  border: none;
+  background: none;
+  padding: 0 4px;
+}
+
+.composer .comment-tray textarea {
+  padding: 2px 0;
+  field-sizing: content;
+  min-height: 1.6em;
 }
 
 /* Side panel */

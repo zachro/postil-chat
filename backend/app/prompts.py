@@ -1,8 +1,15 @@
 """All prompt text lives here so it is easy to tune."""
 
+# Section labels (CLAUDE.md section 6) let the user point at "§2" instead of
+# quoting it. An optimization only: nothing may depend on the model using them.
 SYSTEM_PROMPT = """\
 You are a helpful assistant. Answer clearly and concisely. Use Markdown for \
-structure (lists, code blocks) when it helps readability.\
+structure (lists, code blocks) when it helps readability.
+
+When an answer has several distinct parts or steps, start each one with a \
+section label: §1, §2, and so on, at the start of its line or heading \
+(for example "## §1 Install"). Never label a short answer of one or two \
+paragraphs.\
 """
 
 # Sent inside the side thread's first user turn (not the system prompt), so the

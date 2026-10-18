@@ -30,7 +30,21 @@ export interface Message {
   token_count: number | null // output tokens, if the provider reported them
   error: string | null
   created_at: string
+  inline_replies: InlineReply[] // a multi-anchor reply's comments, in order
 }
+
+/** One comment of a multi-anchor reply, on a span of an assistant message in the same thread. */
+export interface InlineReply {
+  target_message_id: number
+  quote: string
+  start: number
+  end: number
+  section: string | null
+  target_version: number
+  comment: string
+}
+
+export type NewInlineReply = Omit<InlineReply, 'target_version'>
 
 export interface MergeNote {
   id: number
@@ -122,18 +136,23 @@ export interface SendHandlers {
   onFinish(message: Message, usage: Usage): void
 }
 
+export interface NewMessage {
+  content: string // may be empty when inline_replies carries the turn
+  model: string
+  inline_replies?: NewInlineReply[]
+}
+
 /** Send a user message and stream the reply. Abort via `signal` to stop generation. */
 export async function sendMessage(
   threadId: number,
-  content: string,
-  model: string,
+  body: NewMessage,
   handlers: SendHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
   const response = await fetch(`/api/threads/${threadId}/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content, model }),
+    body: JSON.stringify(body),
     signal,
   })
   if (!response.ok || !response.body) {
