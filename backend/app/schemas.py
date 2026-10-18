@@ -58,6 +58,37 @@ class MessageOut(ORMModel):
     error: str | None
     created_at: UTCDatetime
     inline_replies: list[InlineReplyOut]  # a multi-anchor reply's comments, in order
+    version: int  # the message_versions row `content` holds
+    version_created_at: UTCDatetime
+
+
+class VersionOut(ORMModel):
+    version: int
+    content: str
+    reason: str | None
+    created_at: UTCDatetime
+
+
+class VersionCreate(BaseModel):
+    """Accept a (possibly edited) revision, or restore an old version, as the new latest."""
+
+    content: str = Field(min_length=1)
+    reason: str | None = None
+    base_version: int | None = None  # rejected (409) if the message has moved on since
+
+    @model_validator(mode="after")
+    def _not_blank(self) -> "VersionCreate":
+        if not self.content.strip():
+            raise ValueError("a version needs content")
+        return self
+
+
+class RevisionProposal(BaseModel):
+    """The `done` event of POST /messages/{id}/revise. Nothing is stored until accepted."""
+
+    content: str
+    model: str
+    reason: str
 
 
 class MergeNoteOut(ORMModel):
