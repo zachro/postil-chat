@@ -79,6 +79,16 @@ class Message(Base):
     inline_replies: Mapped[list["InlineReply"]] = relationship(
         foreign_keys="InlineReply.message_id", order_by="InlineReply.position"
     )
+    versions: Mapped[list["MessageVersion"]] = relationship(order_by="MessageVersion.version")
+
+    @property
+    def version(self) -> int:
+        """The current version: the one `content` holds (1 for user messages)."""
+        return self.versions[-1].version if self.versions else 1
+
+    @property
+    def version_created_at(self) -> datetime:
+        return self.versions[-1].created_at if self.versions else self.created_at
 
 
 class MessageVersion(Base):

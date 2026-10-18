@@ -12,6 +12,10 @@ Every thread's context is the same system prompt followed by its turns:
 
 assemble_summary_context() builds the merge-back summarizer's request: just the
 focus span and the side thread's own transcript, not the parent history.
+
+assemble_revision_context() builds a revise-in-place request: the thread's
+context through the reply being revised (the same prefix its side threads
+share), then the notes from its merged side threads and the rewrite instruction.
 """
 
 from collections import defaultdict
@@ -23,6 +27,7 @@ from sqlalchemy.orm import Session
 from app.llm.base import ChatMessage
 from app.models import InlineReply, MergeNote, Message, MessageVersion, Thread
 from app.prompts import (
+    REVISE_INSTRUCTION,
     SIDE_THREAD_INSTRUCTION,
     SUMMARIZE_REQUEST,
     SUMMARIZER_PROMPT,
@@ -63,6 +68,48 @@ def assemble_summary_context(session: Session, thread_id: int) -> list[ChatMessa
         f"{SUMMARIZE_REQUEST}"
     )
     return [ChatMessage("system", SUMMARIZER_PROMPT), ChatMessage("user", request)]
+
+
+def assemble_revision_context(session: Session, message_id: int) -> list[ChatMessage]:
+    """The request to rewrite an assistant reply with its side threads' notes (section 8)."""
+    message = session.get(Message, message_id)
+    if message is None:
+        raise LookupError(f"message {message_id} not found")
+    if message.role != "assistant":
+        raise ValueError("only assistant messages can be revised")
+    notes = pending_revision_notes(session, message)
+    if not notes:
+        raise ValueError(f"message {message_id} has no merged side threads to apply")
+    turns = _turns(session, message.thread)
+    index = next((i for i, t in enumerate(turns) if t.message_id == message.id), None)
+    if index is None:
+        raise ValueError(f"message {message_id} is not in its thread's context")
+    prefix = [t.message for t in turns[: index + 1]]
+    prefix[-1] = replace(prefix[-1], cache_breakpoint=True)  # shared with its side threads
+    request = f"{_notes_block(notes)}\n<revise>\n{REVISE_INSTRUCTION}\n</revise>"
+    return [ChatMessage("system", SYSTEM_PROMPT), *prefix, ChatMessage("user", request)]
+
+
+def pending_revision_notes(session: Session, message: Message) -> list[MergeNote]:
+    """Approved notes of side threads anchored to `message`, merged after its current version."""
+    since = session.scalar(
+        select(MessageVersion.created_at)
+        .where(MessageVersion.message_id == message.id)
+        .order_by(MessageVersion.version.desc())
+        .limit(1)
+    )
+    return list(
+        session.scalars(
+            select(MergeNote)
+            .join(Thread, MergeNote.thread_id == Thread.id)
+            .where(
+                Thread.anchor_message_id == message.id,
+                MergeNote.approved,
+                MergeNote.created_at > (since or message.created_at),
+            )
+            .order_by(MergeNote.id)
+        )
+    )
 
 
 def _turns(session: Session, thread: Thread) -> list[_Turn]:
@@ -151,12 +198,13 @@ def _notes_block(notes: list[MergeNote]) -> str:
     lines = []
     for n in notes:
         text = "\n  ".join(line for line in n.note_text.strip().splitlines() if line.strip())
-        lines.append(f"- [re {_note_label(n.thread)}] {_escape(text)}")
+        lines.append(f"- [re {note_label(n.thread)}] {_escape(text)}")
     body = "\n".join(lines)
     return f"<resolved_side_threads>\n{body}\n</resolved_side_threads>"
 
 
-def _note_label(side: Thread) -> str:
+def note_label(side: Thread) -> str:
+    """How a side thread is referred to: its section, else a short quote."""
     if side.anchor_section:
         return _escape(side.anchor_section)
     return f'"{_escape(_short_quote(side.anchor_quote or ""))}"'
@@ -226,7 +274,7 @@ def _version_content(session: Session, message_id: int, version: int) -> str | N
     )
 
 
-_TAGS = ("side_thread", "focus", "resolved_side_threads", "inline_replies", "reply")
+_TAGS = ("side_thread", "focus", "resolved_side_threads", "inline_replies", "reply", "revise")
 _TRANSCRIPT_TAG = "side_thread_transcript"
 
 

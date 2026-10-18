@@ -285,8 +285,8 @@ export function sourceToRange(root: Node, start: number, end: number): Range | n
 
 /**
  * Find an anchor's span in (possibly revised) content: its stored offsets if the
- * quote is still there, else the occurrence of the quote closest to them, else
- * null (the anchor is detached).
+ * quote is still there, else the exact occurrence nearest them, else a close
+ * fuzzy match (see fuzzyFind), else null: the anchor is detached.
  */
 export function locateAnchor(source: string, anchor: SourceAnchor): Span | null {
   const { quote, start } = anchor
@@ -295,5 +295,71 @@ export function locateAnchor(source: string, anchor: SourceAnchor): Span | null 
   for (let at = source.indexOf(quote); at !== -1; at = source.indexOf(quote, at + 1)) {
     if (best === null || Math.abs(at - start) < Math.abs(best - start)) best = at
   }
-  return best === null ? null : [best, best + quote.length]
+  if (best !== null) return [best, best + quote.length]
+  return cachedFuzzyFind(source, quote, start)
+}
+
+// Fuzzy re-anchoring only for quotes long enough that a few edits cannot land on
+// unrelated text, and short enough that the O(source × quote) search stays cheap.
+const FUZZY_MIN_CHARS = 12
+const FUZZY_MAX_CHARS = 1000
+const FUZZY_MAX_ERROR_RATE = 0.2
+const FUZZY_CACHE_SIZE = 200
+
+const fuzzyCache = new Map<string, Span | null>()
+
+function cachedFuzzyFind(source: string, quote: string, near: number): Span | null {
+  const key = `${near}\u0000${quote}\u0000${source}`
+  if (!fuzzyCache.has(key)) {
+    if (fuzzyCache.size >= FUZZY_CACHE_SIZE) fuzzyCache.clear()
+    fuzzyCache.set(key, fuzzyFind(source, quote, near))
+  }
+  return fuzzyCache.get(key)!
+}
+
+/**
+ * The span of `source` with the fewest edits (Levenshtein) from `quote`, if that
+ * is at most 20% of the quote's length; ties go to the span nearest `near`.
+ * Approximate substring search: dynamic programming over the quote, where a
+ * match may start at any source position.
+ */
+export function fuzzyFind(source: string, quote: string, near: number): Span | null {
+  const m = quote.length
+  if (m < FUZZY_MIN_CHARS || m > FUZZY_MAX_CHARS) return null
+  const limit = Math.floor(m * FUZZY_MAX_ERROR_RATE)
+  // For the current source position j: dist[i] = edits to match quote[0..i) ending
+  // at j, and from[i] = where that match starts in the source.
+  let dist = Int32Array.from({ length: m + 1 }, (_, i) => i)
+  let from = new Int32Array(m + 1)
+  let nextDist = new Int32Array(m + 1)
+  let nextFrom = new Int32Array(m + 1)
+  let best: { cost: number; span: Span } | null = null
+  for (let j = 1; j <= source.length; j++) {
+    nextDist[0] = 0
+    nextFrom[0] = j
+    for (let i = 1; i <= m; i++) {
+      const substitute = dist[i - 1] + (quote[i - 1] === source[j - 1] ? 0 : 1)
+      const extraSourceChar = dist[i] + 1
+      const missingQuoteChar = nextDist[i - 1] + 1
+      if (substitute <= extraSourceChar && substitute <= missingQuoteChar) {
+        nextDist[i] = substitute
+        nextFrom[i] = from[i - 1]
+      } else if (extraSourceChar <= missingQuoteChar) {
+        nextDist[i] = extraSourceChar
+        nextFrom[i] = from[i]
+      } else {
+        nextDist[i] = missingQuoteChar
+        nextFrom[i] = nextFrom[i - 1]
+      }
+    }
+    const cost = nextDist[m]
+    if (cost <= limit) {
+      const span: Span = [nextFrom[m], j]
+      const closer = best && Math.abs(span[0] - near) < Math.abs(best.span[0] - near)
+      if (!best || cost < best.cost || (cost === best.cost && closer)) best = { cost, span }
+    }
+    ;[dist, nextDist] = [nextDist, dist]
+    ;[from, nextFrom] = [nextFrom, from]
+  }
+  return best?.span ?? null
 }

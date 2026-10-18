@@ -13,11 +13,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import ModelConfig, Settings, get_settings
-from app.context import assemble_context
+from app.context import assemble_context, assemble_revision_context, pending_revision_notes
 from app.db import init_db, make_engine
 from app.llm import LLMProvider, Usage, estimate_tokens, get_provider
 from app.merge import merge_thread, summarize_thread
 from app.models import Conversation, InlineReply, Message, MessageVersion, Thread
+from app.revise import accept_revision, clean_revision, revision_reason
 from app.schemas import (
     ContextMessage,
     ContextPreview,
@@ -29,10 +30,13 @@ from app.schemas import (
     ModelInfo,
     ModelsResponse,
     NoteProposal,
+    RevisionProposal,
     SendMessage,
     SideThreadCreate,
     ThreadOut,
     ThreadUpdate,
+    VersionCreate,
+    VersionOut,
 )
 
 log = logging.getLogger("postil")
@@ -72,6 +76,16 @@ def create_app(
         if thread is None:
             raise HTTPException(404, "thread not found")
         return thread
+
+    def get_revisable(session: Session, message_id: int) -> Message:
+        message = session.get(Message, message_id)
+        if message is None:
+            raise HTTPException(404, "message not found")
+        if message.role != "assistant":
+            raise HTTPException(422, "only assistant messages have versions")
+        if message.thread.status != "open":
+            raise HTTPException(409, f"thread is {message.thread.status}; reopen it to revise")
+        return message
 
     def require_open_side_thread(thread: Thread) -> None:
         if thread.kind != "side":
@@ -290,9 +304,8 @@ def create_app(
                         token_count=usage.output_tokens or None,
                         error=error,
                     )
+                    reply.versions.append(MessageVersion(version=1, content=reply.content))
                     s.add(reply)
-                    s.flush()
-                    s.add(MessageVersion(message_id=reply.id, version=1, content=reply.content))
                     s.commit()
                     reply_out = MessageOut.model_validate(reply).model_dump(mode="json")
             usage_out = asdict(usage)
@@ -307,6 +320,59 @@ def create_app(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @router.post("/messages/{message_id}/revise")
+    def revise(message_id: int, session: SessionDep) -> StreamingResponse:
+        """Stream a rewrite of the reply that applies its merged side threads' notes.
+
+        Events: `delta` ({text}), then `done` (RevisionProposal) or `error` ({error}).
+        Nothing is stored; accept with POST /messages/{id}/versions.
+        """
+        message = get_revisable(session, message_id)
+        try:
+            context = assemble_revision_context(session, message_id)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        reason = revision_reason(pending_revision_notes(session, message))
+        model_id = thread_model(message.thread)
+
+        async def events() -> AsyncIterator[str]:
+            parts: list[str] = []
+            try:
+                provider = provider_for(settings.models[model_id])
+                async for delta in provider.stream_chat(context):
+                    parts.append(delta)
+                    yield sse("delta", {"text": delta})
+            except Exception as exc:
+                yield sse("error", {"error": str(exc) or type(exc).__name__})
+                return
+            proposal = RevisionProposal(
+                content=clean_revision("".join(parts)), model=model_id, reason=reason
+            )
+            yield sse("done", proposal.model_dump())
+
+        return StreamingResponse(
+            events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @router.post("/messages/{message_id}/versions")
+    def create_version(message_id: int, body: VersionCreate, session: SessionDep) -> MessageOut:
+        """Accept a revision (or restore an old version) as the message's new content."""
+        message = get_revisable(session, message_id)
+        if body.base_version is not None and body.base_version != message.version:
+            raise HTTPException(409, f"the message is at version {message.version} now")
+        accept_revision(session, message, body.content, body.reason)
+        session.commit()
+        return MessageOut.model_validate(message)
+
+    @router.get("/messages/{message_id}/versions")
+    def list_versions(message_id: int, session: SessionDep) -> list[VersionOut]:
+        message = session.get(Message, message_id)
+        if message is None:
+            raise HTTPException(404, "message not found")
+        return [VersionOut.model_validate(v) for v in message.versions]
 
     @router.get("/threads/{thread_id}/context-preview")
     async def context_preview(thread_id: int, session: SessionDep) -> ContextPreview:

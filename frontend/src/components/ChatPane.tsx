@@ -30,6 +30,7 @@ interface Props {
   refreshKey?: string // changes when the thread's context changes without new messages
   closedNotice?: ReactNode // set when the thread takes no new messages; replaces the composer
   notesAfter?(messageId: number): MergeMarker[] // merged notes that take effect after a message
+  messageFooter?(message: Message): ReactNode // e.g. version and revise actions
   className?: string
 }
 
@@ -51,7 +52,7 @@ interface PendingReply {
 export function ChatPane(props: Props) {
   const { thread, createThread, models, model, onModelChange, onAppend, onReplyFinished } = props
   const { anchorsFor, onOpenThread, onReplyInline, header, emptyText, refreshKey } = props
-  const { closedNotice, notesAfter } = props
+  const { closedNotice, notesAfter, messageFooter } = props
   const messages = thread?.messages ?? []
   const [draft, setDraft] = useState<string | null>(null) // streaming reply, null when idle
   const [error, setError] = useState<string | null>(null)
@@ -204,6 +205,8 @@ export function ChatPane(props: Props) {
           error: 'cancelled',
           created_at: new Date().toISOString(),
           inline_replies: [],
+          version: 1,
+          version_created_at: new Date().toISOString(),
         })
       } else {
         setError(String(e))
@@ -233,6 +236,7 @@ export function ChatPane(props: Props) {
                 anchors={anchorsOf(m.id)}
                 inlineReplies={m.inline_replies}
                 onOpenThread={onOpenThread}
+                footer={m.role === 'assistant' && m.id > 0 ? messageFooter?.(m) : undefined}
               />
               {notesAfter?.(m.id).map((note) => (
                 <button

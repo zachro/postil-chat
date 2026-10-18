@@ -291,6 +291,12 @@ _(Claude Code: append dated one-line entries here as you make non-obvious choice
 - 2026-10-17: Multi-anchor comments live in a new `inline_replies` table (a new table needs no migration under `create_all`). `messages.content` keeps only the free text; `context.py` renders one `<inline_replies>` block per target message.
 - 2026-10-17: Inline replies may only target assistant messages in the same thread. The `quote` fallback is the first 40 chars (whitespace collapsed, `…` if cut, `"` as `&quot;`).
 - 2026-10-17: The comment tray is per chat pane, so it works in open side threads too, not only the main thread.
+- 2026-10-18: Revision proposals are never stored. `POST /messages/{id}/revise` streams a rewrite; `POST /messages/{id}/versions` stores the accepted (possibly edited) text, with `base_version` to reject a stale proposal (409). Restoring an old version adds a new version.
+- 2026-10-18: The revise prompt is the thread's context through the reply (the same cached prefix its side threads use), then one user turn with the notes and a `<revise>` instruction. It is built in `context.py`.
+- 2026-10-18: A reply's pending notes are the approved notes of side threads anchored to it, merged after its current version was created. Only those are sent, so a revision never re-applies a note.
+- 2026-10-18: Re-anchoring is computed at render time, not stored: the exact quote nearest the stored offsets, else a fuzzy match (at most 20% edits, quotes of 12-1000 chars), else detached. Stored anchors never change, and `as_of_anchor` side threads keep seeing the version they were anchored to.
+- 2026-10-18: Only replies in open threads can be revised (409 otherwise), like sending.
+- 2026-10-18: The revision diff is a hand-written line LCS (`lib/diff.ts`), not a new dependency.
 
 ## 15. Open questions for the owner
 

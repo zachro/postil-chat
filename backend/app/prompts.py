@@ -35,3 +35,12 @@ Use systemd for the worker instead of supervisor.\
 """
 
 SUMMARIZE_REQUEST = "Write the note for the side discussion above."
+
+# Revise-in-place (CLAUDE.md section 8): the last user turn after the reply being
+# revised and the notes from its merged side threads.
+REVISE_INSTRUCTION = """\
+Rewrite your previous reply so it reflects the conclusions in \
+<resolved_side_threads>. Keep its structure, headings and § labels, and change \
+only what those conclusions require. Reply with only the full rewritten \
+response, with no preamble.\
+"""
