@@ -31,6 +31,15 @@ export interface Message {
   error: string | null
   created_at: string
   inline_replies: InlineReply[] // a multi-anchor reply's comments, in order
+  version: number // the version `content` holds
+  version_created_at: string
+}
+
+export interface MessageVersion {
+  version: number
+  content: string
+  reason: string | null
+  created_at: string
 }
 
 /** One comment of a multi-anchor reply, on a span of an assistant message in the same thread. */
@@ -168,6 +177,42 @@ export async function sendMessage(
     }
   }
 }
+
+export interface RevisionProposal {
+  content: string
+  model: string
+  reason: string
+}
+
+/**
+ * Stream a rewrite of an assistant reply that applies its merged side threads'
+ * notes. Nothing is stored; accept it with createVersion.
+ */
+export async function reviseMessage(
+  messageId: number,
+  onDelta: (text: string) => void,
+  signal?: AbortSignal,
+): Promise<RevisionProposal> {
+  const response = await fetch(`/api/messages/${messageId}/revise`, { method: 'POST', signal })
+  if (!response.ok || !response.body) {
+    throw new Error(`${response.status} ${await response.text()}`)
+  }
+  for await (const { event, data } of readSSE(response.body)) {
+    const payload = JSON.parse(data)
+    if (event === 'delta') onDelta((payload as { text: string }).text)
+    else if (event === 'done') return payload as RevisionProposal
+    else if (event === 'error') throw new Error((payload as { error: string }).error)
+  }
+  throw new Error('the revision stream ended early')
+}
+
+/** Store content as the message's new latest version (an accepted revision or a restore). */
+export const createVersion = (
+  messageId: number,
+  body: { content: string; reason?: string | null; base_version?: number },
+) => request<Message>(`/messages/${messageId}/versions`, { method: 'POST', body: JSON.stringify(body) })
+
+export const getVersions = (messageId: number) => request<MessageVersion[]>(`/messages/${messageId}/versions`)
 
 export interface ContextPreview {
   thread_id: number

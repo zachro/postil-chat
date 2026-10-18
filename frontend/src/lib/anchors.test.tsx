@@ -255,4 +255,24 @@ describe('locateAnchor', () => {
   it('returns null when the quote is gone (detached)', () => {
     expect(locateAnchor('rewritten', { quote: 'one', start: 0, end: 3 })).toBeNull()
   })
+
+  it('re-locates a lightly edited quote by fuzzy match', () => {
+    const quote = 'Run python -m venv env to create it'
+    const revised = 'Intro.\n\nRun python3 -m venv .env to create it, then activate.'
+    const span = locateAnchor(revised, { quote, start: 0, end: quote.length })!
+    expect(revised.slice(...span)).toBe('Run python3 -m venv .env to create it')
+  })
+
+  it('prefers the fuzzy match nearest the stored offsets', () => {
+    const quote = 'install the package now'
+    const revised = 'install the packages now. Later: install the packages now.'
+    const span = locateAnchor(revised, { quote, start: 34, end: 34 + quote.length })!
+    expect(span[0]).toBe(33)
+  })
+
+  it('detaches short or heavily rewritten quotes instead of guessing', () => {
+    expect(locateAnchor('Hello Earth', { quote: 'world', start: 6, end: 11 })).toBeNull()
+    const quote = 'python -m venv <folder-name>'
+    expect(locateAnchor('uv venv <dir>', { quote, start: 0, end: quote.length })).toBeNull()
+  })
 })
