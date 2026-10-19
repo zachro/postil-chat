@@ -101,6 +101,9 @@ export const getConversation = (id: number) => request<Conversation>(`/conversat
 export const createConversation = () =>
   request<Conversation>('/conversations', { method: 'POST', body: '{}' })
 
+/** Download link for a conversation tree: Markdown to read, JSON (with every version) to keep. */
+export const exportUrl = (id: number, format: 'md' | 'json') => `/api/conversations/${id}/export?format=${format}`
+
 export type ContextMode = Thread['context_mode']
 
 export interface NewSideThread {

@@ -13,6 +13,7 @@ import {
   createConversation,
   createSideThread,
   createVersion,
+  exportUrl,
   getConversation,
   getModels,
   listConversations,
@@ -349,6 +350,8 @@ export default function App() {
   if (!models) return null
 
   const mainThread = mainThreadOf(conversation) ?? null
+  // The list has the title set on the first send; the open conversation keeps its original.
+  const title = conversations.find((c) => c.id === conversation?.id)?.title ?? conversation?.title
   return (
     <div className={`layout${tabs.length ? ' with-panel' : ''}`}>
       <ConversationList
@@ -374,6 +377,20 @@ export default function App() {
         refreshKey={versionKey}
         onOpenThread={openThread}
         onReplyInline={mainThread ? (id, anchor) => replyInline(mainThread, id, anchor) : undefined}
+        header={
+          conversation && (
+            <header className="chat-header">
+              <h1>{title}</h1>
+              <span className="muted">Export</span>
+              <a href={exportUrl(conversation.id, 'md')} download>
+                Markdown
+              </a>
+              <a href={exportUrl(conversation.id, 'json')} download title="Every thread and message version">
+                JSON
+              </a>
+            </header>
+          )
+        }
       />
       {tabs.length > 0 && (
         <SidePanel

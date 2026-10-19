@@ -5,16 +5,17 @@ import logging
 import os
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import asdict
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
+from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import ModelConfig, Settings, get_settings
 from app.context import assemble_context, assemble_revision_context, pending_revision_notes
 from app.db import init_db, make_engine
+from app.export import export_filename, export_json, export_markdown
 from app.llm import LLMProvider, Usage, estimate_tokens, get_provider
 from app.merge import merge_thread, summarize_thread
 from app.models import Conversation, InlineReply, Message, MessageVersion, Thread
@@ -149,6 +150,25 @@ def create_app(
         if conversation is None:
             raise HTTPException(404, "conversation not found")
         return ConversationOut.model_validate(conversation)
+
+    @router.get("/conversations/{conversation_id}/export")
+    def export_conversation(
+        conversation_id: int,
+        session: SessionDep,
+        fmt: Annotated[Literal["md", "json"], Query(alias="format")] = "md",
+    ) -> Response:
+        """Download the conversation tree: Markdown to read, JSON with every version to keep."""
+        conversation = session.get(Conversation, conversation_id)
+        if conversation is None:
+            raise HTTPException(404, "conversation not found")
+        disposition = {
+            "Content-Disposition": f'attachment; filename="{export_filename(conversation, fmt)}"'
+        }
+        if fmt == "json":
+            return JSONResponse(export_json(conversation), headers=disposition)
+        return PlainTextResponse(
+            export_markdown(conversation), media_type="text/markdown", headers=disposition
+        )
 
     @router.post("/messages/{message_id}/threads", status_code=201)
     def create_side_thread(

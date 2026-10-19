@@ -878,3 +878,30 @@ button.link:hover {
 .history-view {
   min-width: 0;
 }
+
+/* --- M8: export, search, settings ------------------------------------------- */
+
+.chat-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 16px 0 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+  font-size: 0.9em;
+}
+
+.chat-header h1 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 1.05em;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-header a {
+  color: var(--accent);
+}
