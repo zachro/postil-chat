@@ -9,9 +9,11 @@ interface Props {
   onSelect(id: number): void
   onSelectHit(hit: SearchHit): void
   onNew(): void
+  onSettings(): void
 }
 
-export function ConversationList({ conversations, activeId, onSelect, onSelectHit, onNew }: Props) {
+export function ConversationList(props: Props) {
+  const { conversations, activeId, onSelect, onSelectHit, onNew, onSettings } = props
   const [query, setQuery] = useState('')
   const [hits, setHits] = useState<SearchHit[] | null>(null) // null while a search is pending
   const searching = query.trim() !== ''
@@ -90,6 +92,9 @@ export function ConversationList({ conversations, activeId, onSelect, onSelectHi
           ))}
         </ul>
       )}
+      <footer className="sidebar-footer">
+        <button onClick={onSettings}>Settings</button>
+      </footer>
     </nav>
   )
 }

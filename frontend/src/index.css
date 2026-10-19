@@ -963,3 +963,73 @@ button.link:hover {
     background: var(--highlight);
   }
 }
+
+.sidebar-footer {
+  margin-top: auto;
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-dialog h3 {
+  margin: 16px 0 4px;
+  font-size: 1em;
+}
+
+.settings-dialog p {
+  margin: 0 0 8px;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 10px 14px;
+  align-items: center;
+}
+
+.settings-dialog .settings-grid label {
+  margin: 0;
+}
+
+.settings-grid > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-dialog select,
+.settings-dialog input:not([type]),
+.settings-dialog input[inputmode] {
+  font: inherit;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.settings-dialog input[inputmode] {
+  width: 9em;
+}
+
+.settings-dialog input[aria-invalid='true'] {
+  border-color: var(--error);
+}
+
+.settings-models {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.settings-models th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.9em;
+  color: var(--fg-muted);
+}
+
+.settings-models td,
+.settings-models th {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}

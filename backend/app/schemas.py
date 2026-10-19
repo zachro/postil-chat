@@ -204,3 +204,38 @@ class SearchHit(BaseModel):
     snippet: str  # one line around the first match, "…" where trimmed
     match_start: int  # the match's span within snippet
     match_end: int
+
+
+class ModelSettingsOut(BaseModel):
+    id: str
+    label: str
+    available: bool
+    missing_env: str | None
+    context_window: int | None  # in effect, override included
+    config_context_window: int | None  # from config.yaml
+
+
+class SettingsOut(BaseModel):
+    default_model: str
+    summarizer_model: str | None  # None: each thread's own model
+    token_budget: int
+    send_with_enter: bool
+    models: list[ModelSettingsOut]
+    overridden: list[str]  # settings saved over config.yaml, sorted
+
+
+class SettingsUpdate(BaseModel):
+    """Only the fields sent are changed. A context window of None drops that override."""
+
+    default_model: str | None = None
+    summarizer_model: str | None = None  # null is a value: use the thread's model
+    token_budget: int | None = Field(default=None, gt=0)
+    send_with_enter: bool | None = None
+    context_windows: dict[str, Annotated[int, Field(gt=0)] | None] | None = None
+
+    @model_validator(mode="after")
+    def _no_null_values(self) -> "SettingsUpdate":
+        for key in self.model_fields_set - {"summarizer_model"}:
+            if getattr(self, key) is None:
+                raise ValueError(f"{key} cannot be null")
+        return self

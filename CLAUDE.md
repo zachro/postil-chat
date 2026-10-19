@@ -297,6 +297,10 @@ _(Claude Code: append dated one-line entries here as you make non-obvious choice
 - 2026-10-18: Re-anchoring is computed at render time, not stored: the exact quote nearest the stored offsets, else a fuzzy match (at most 20% edits, quotes of 12-1000 chars), else detached. Stored anchors never change, and `as_of_anchor` side threads keep seeing the version they were anchored to.
 - 2026-10-18: Only replies in open threads can be revised (409 otherwise), like sending.
 - 2026-10-18: The revision diff is a hand-written line LCS (`lib/diff.ts`), not a new dependency.
+- 2026-10-19: Markdown export follows the main thread; each side thread is a blockquote right after the message it is anchored to (nested threads nest as quotes), ending with its merge note. Only current content; the JSON export adds every message version.
+- 2026-10-19: Search is SQLite `LIKE` over conversation titles and current message content (not old versions), no FTS index. Case-insensitive for ASCII only; `%`/`_` match literally. Title hits first, then messages, newest first, capped at 50.
+- 2026-10-19: The settings dialog saves overrides in a `settings` table (key, JSON value) layered over config.yaml, which is never rewritten (it is hand-edited and commented). Each request reads the effective settings. Overrides that no longer apply (a model removed from config.yaml) are ignored, not deleted. Models and API keys stay config/env-only; the dialog can override each model's context window.
+- 2026-10-19: Enter-to-send is a server-side setting (`send_with_enter`), like the others, rather than browser storage. Ctrl/Cmd+Enter always sends; Shift+Enter adds a line; Enter during IME composition never sends.
 
 ## 15. Open questions for the owner
 

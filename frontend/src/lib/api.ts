@@ -101,6 +101,35 @@ export const getConversation = (id: number) => request<Conversation>(`/conversat
 export const createConversation = () =>
   request<Conversation>('/conversations', { method: 'POST', body: '{}' })
 
+export interface ModelSettings extends ModelInfo {
+  context_window: number | null // in effect, override included
+  config_context_window: number | null // from config.yaml
+}
+
+/** config.yaml with what was saved in the settings dialog applied. */
+export interface Settings {
+  default_model: string
+  summarizer_model: string | null // null: each thread's own model
+  token_budget: number // for models without a context window
+  send_with_enter: boolean
+  models: ModelSettings[]
+  overridden: string[] // settings saved over config.yaml
+}
+
+/** Only the fields sent change; a context window of null drops that override. */
+export interface SettingsUpdate {
+  default_model?: string
+  summarizer_model?: string | null
+  token_budget?: number
+  send_with_enter?: boolean
+  context_windows?: Record<string, number | null>
+}
+
+export const getSettings = () => request<Settings>('/settings')
+export const updateSettings = (body: SettingsUpdate) =>
+  request<Settings>('/settings', { method: 'PATCH', body: JSON.stringify(body) })
+export const resetSettings = () => request<Settings>('/settings', { method: 'DELETE' })
+
 /** A conversation title (message_id null) or message containing the search query. */
 export interface SearchHit {
   conversation_id: number

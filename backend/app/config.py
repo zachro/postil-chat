@@ -32,6 +32,7 @@ class Settings:
     models: dict[str, ModelConfig]
     summarizer_model: str | None = None
     token_budget: int = 8000  # fallback for models without a context_window
+    send_with_enter: bool = False  # composer: Enter sends (Shift+Enter for a new line)
 
     def budget_for(self, model_id: str) -> int:
         return self.models[model_id].context_window or self.token_budget
@@ -52,6 +53,7 @@ def parse_settings(raw: dict[str, Any], root: Path = REPO_ROOT) -> Settings:
         models=models,
         summarizer_model=summarizer_model,
         token_budget=raw.get("token_budget", 8000),
+        send_with_enter=raw.get("send_with_enter", False),
     )
 
 

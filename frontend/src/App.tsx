@@ -6,6 +6,7 @@ import { MessageFooter } from './components/MessageFooter'
 import { RevisionDialog, type AnchorRef } from './components/RevisionDialog'
 import { VersionHistoryDialog } from './components/VersionHistoryDialog'
 import type { MessageAnchor } from './components/MessageView'
+import { SettingsDialog } from './components/SettingsDialog'
 import { SidePanel, SideThreadHeader } from './components/SidePanel'
 import { locateAnchor, type SourceAnchor } from './lib/anchors'
 import { shorten } from './lib/format'
@@ -16,8 +17,11 @@ import {
   exportUrl,
   getConversation,
   getModels,
+  getSettings,
   listConversations,
   mergeThread,
+  resetSettings,
+  updateSettings,
   updateThread,
   type ContextMode,
   type Conversation,
@@ -25,6 +29,8 @@ import {
   type Message,
   type ModelsResponse,
   type SearchHit,
+  type Settings,
+  type SettingsUpdate,
   type Thread,
 } from './lib/api'
 
@@ -51,6 +57,9 @@ const mainThreadOf = (c: Conversation | null) => c?.threads.find((t) => t.kind =
 
 export default function App() {
   const [models, setModels] = useState<ModelsResponse | null>(null)
+  const [settings, setSettings] = useState<Settings | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsSaves, setSettingsSaves] = useState(0) // budgets may have changed: refresh meters
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
   // null = a new chat that is saved on its first send (no empty conversations pile up)
   const [conversation, setConversation] = useState<Conversation | null>(null)
@@ -90,13 +99,22 @@ export default function App() {
 
   useEffect(() => {
     async function load() {
-      setModels(await getModels())
+      const [m, s] = await Promise.all([getModels(), getSettings()])
+      setModels(m)
+      setSettings(s)
       const list = await listConversations()
       setConversations(list)
       if (list.length) await open(list[0].id)
     }
     load().catch((e) => setError(String(e)))
   }, [open])
+
+  /** Apply saved settings; the models list carries the default model, so refetch it too. */
+  async function applySettings(save: Promise<Settings>) {
+    setSettings(await save)
+    setModels(await getModels())
+    setSettingsSaves((n) => n + 1)
+  }
 
   // Bring a search hit into view once its conversation (and side thread tab) has rendered.
   useEffect(() => {
@@ -194,8 +212,9 @@ export default function App() {
     )
   }
 
-  // Changes when any reply is revised, so token counts refresh without new messages.
-  const versionKey = threads.flatMap((t) => t.messages.map((m) => m.version)).join(',')
+  // Changes when any reply is revised or settings are saved, so token counts refresh
+  // without new messages.
+  const versionKey = `${threads.flatMap((t) => t.messages.map((m) => m.version)).join(',')}:${settingsSaves}`
 
   function resolveModel(thread: Thread | undefined): string {
     for (let t = thread; t; t = threadById(t.parent_thread_id)) {
@@ -328,6 +347,7 @@ export default function App() {
         anchorsFor={anchorsFor}
         notesAfter={notesAfter}
         messageFooter={messageFooter}
+        sendWithEnter={settings?.send_with_enter}
         onOpenThread={openThread}
         onReplyInline={
           thread && thread.status === 'open' && depth(thread) < MAX_DEPTH
@@ -381,6 +401,7 @@ export default function App() {
         onSelect={(id) => open(id).catch((e) => setError(String(e)))}
         onSelectHit={(hit) => openHit(hit).catch((e) => setError(String(e)))}
         onNew={startNew}
+        onSettings={() => setSettingsOpen(true)}
       />
       <ChatPane
         key={paneKey}
@@ -396,6 +417,7 @@ export default function App() {
         anchorsFor={anchorsFor}
         notesAfter={notesAfter}
         messageFooter={messageFooter}
+        sendWithEnter={settings?.send_with_enter}
         refreshKey={versionKey}
         onOpenThread={openThread}
         onReplyInline={mainThread ? (id, anchor) => replyInline(mainThread, id, anchor) : undefined}
@@ -441,6 +463,14 @@ export default function App() {
             replaceMessage(await createVersion(revising, { content, reason, base_version: base }))
           }}
           onClose={() => setRevising(null)}
+        />
+      )}
+      {settingsOpen && settings && (
+        <SettingsDialog
+          settings={settings}
+          onSave={(update: SettingsUpdate) => applySettings(updateSettings(update))}
+          onReset={() => applySettings(resetSettings())}
+          onClose={() => setSettingsOpen(false)}
         />
       )}
       {history !== null && (

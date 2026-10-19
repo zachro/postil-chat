@@ -14,6 +14,13 @@ summarizer_model: null
 # don't set `context_window` below.
 token_budget: 8000
 
+# Composer: true = Enter sends and Shift+Enter starts a new line; false = Ctrl+Enter sends.
+send_with_enter: false
+
+# The settings dialog saves overrides for the values above (and per-model
+# context_window) in the database; this file is never rewritten. "Reset to
+# config.yaml" in the dialog drops them.
+
 models:
   - id: qwen3-local
     label: Qwen3 1.7B (Ollama)

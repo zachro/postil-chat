@@ -141,3 +141,12 @@ class InlineReply(Base):
     section: Mapped[str | None] = mapped_column(String(20))
     target_version: Mapped[int]  # target message version the anchor was made against
     comment: Mapped[str] = mapped_column(Text)
+
+
+class Setting(Base):
+    """A value saved from the settings dialog, overriding config.yaml (see preferences.py)."""
+
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)  # JSON

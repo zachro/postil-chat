@@ -19,6 +19,7 @@ from app.export import export_filename, export_json, export_markdown
 from app.llm import LLMProvider, Usage, estimate_tokens, get_provider
 from app.merge import merge_thread, summarize_thread
 from app.models import Conversation, InlineReply, Message, MessageVersion, Thread
+from app.preferences import clear_settings, effective_settings, save_settings
 from app.revise import accept_revision, clean_revision, revision_reason
 from app.schemas import (
     ContextMessage,
@@ -29,11 +30,14 @@ from app.schemas import (
     MergeRequest,
     MessageOut,
     ModelInfo,
+    ModelSettingsOut,
     ModelsResponse,
     NoteProposal,
     RevisionProposal,
     SearchHit,
     SendMessage,
+    SettingsOut,
+    SettingsUpdate,
     SideThreadCreate,
     ThreadOut,
     ThreadUpdate,
@@ -56,8 +60,8 @@ def create_app(
     settings: Settings | None = None,
     provider_for: Callable[[ModelConfig], LLMProvider] = get_provider,
 ) -> FastAPI:
-    settings = settings or get_settings()
-    session_factory = init_db(make_engine(settings.database_url))
+    config = settings or get_settings()  # config.yaml; see SettingsDep for what applies
+    session_factory = init_db(make_engine(config.database_url))
 
     def get_session() -> Iterator[Session]:
         with session_factory() as session:
@@ -65,7 +69,38 @@ def create_app(
 
     SessionDep = Annotated[Session, Depends(get_session)]
 
-    def thread_model(thread: Thread) -> str:
+    def get_current_settings(session: SessionDep) -> Settings:
+        return effective_settings(session, config)[0]
+
+    # config.yaml plus what was saved in the settings dialog, read per request.
+    SettingsDep = Annotated[Settings, Depends(get_current_settings)]
+
+    def missing_env(model: ModelConfig) -> str | None:
+        env = model.api_key_env
+        return env if env and not os.environ.get(env) else None
+
+    def settings_out(session: Session) -> SettingsOut:
+        settings, overridden = effective_settings(session, config)
+        return SettingsOut(
+            default_model=settings.default_model,
+            summarizer_model=settings.summarizer_model,
+            token_budget=settings.token_budget,
+            send_with_enter=settings.send_with_enter,
+            models=[
+                ModelSettingsOut(
+                    id=m.id,
+                    label=m.label,
+                    available=missing_env(m) is None,
+                    missing_env=missing_env(m),
+                    context_window=m.context_window,
+                    config_context_window=config.models[m.id].context_window,
+                )
+                for m in settings.models.values()
+            ],
+            overridden=overridden,
+        )
+
+    def thread_model(settings: Settings, thread: Thread) -> str:
         """The thread's model, inherited from its parent chain if unset."""
         current: Thread | None = thread
         while current is not None:
@@ -124,14 +159,35 @@ def create_app(
     router = APIRouter(prefix="/api")
 
     @router.get("/models")
-    def list_models() -> ModelsResponse:
-        models = []
-        for m in settings.models.values():
-            missing = m.api_key_env if m.api_key_env and not os.environ.get(m.api_key_env) else None
-            models.append(
-                ModelInfo(id=m.id, label=m.label, available=missing is None, missing_env=missing)
+    def list_models(settings: SettingsDep) -> ModelsResponse:
+        models = [
+            ModelInfo(
+                id=m.id, label=m.label, available=missing_env(m) is None, missing_env=missing_env(m)
             )
+            for m in settings.models.values()
+        ]
         return ModelsResponse(models=models, default_model=settings.default_model)
+
+    @router.get("/settings")
+    def get_settings_route(session: SessionDep) -> SettingsOut:
+        return settings_out(session)
+
+    @router.patch("/settings")
+    def update_settings(body: SettingsUpdate, session: SessionDep) -> SettingsOut:
+        """Save settings over config.yaml; only the fields sent change."""
+        try:
+            save_settings(session, config, body)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        session.commit()
+        return settings_out(session)
+
+    @router.delete("/settings")
+    def reset_settings(session: SessionDep) -> SettingsOut:
+        """Drop every saved setting, back to config.yaml."""
+        clear_settings(session)
+        session.commit()
+        return settings_out(session)
 
     @router.get("/conversations")
     def list_conversations(session: SessionDep) -> list[ConversationSummary]:
@@ -139,7 +195,9 @@ def create_app(
         return [ConversationSummary.model_validate(c) for c in rows]
 
     @router.post("/conversations", status_code=201)
-    def create_conversation(body: ConversationCreate, session: SessionDep) -> ConversationOut:
+    def create_conversation(
+        body: ConversationCreate, session: SessionDep, settings: SettingsDep
+    ) -> ConversationOut:
         conversation = Conversation(title=body.title or DEFAULT_TITLE)
         conversation.threads.append(Thread(kind="main", model=settings.default_model))
         session.add(conversation)
@@ -226,11 +284,11 @@ def create_app(
         return ThreadOut.model_validate(thread)
 
     @router.post("/threads/{thread_id}/summarize")
-    async def summarize(thread_id: int, session: SessionDep) -> NoteProposal:
+    async def summarize(thread_id: int, session: SessionDep, settings: SettingsDep) -> NoteProposal:
         """Propose a merge note for a side thread. Nothing is stored until /merge."""
         thread = get_thread(session, thread_id)
         require_open_side_thread(thread)
-        model_id = settings.summarizer_model or thread_model(thread)
+        model_id = settings.summarizer_model or thread_model(settings, thread)
         try:
             note = await summarize_thread(
                 session, thread_id, provider_for(settings.models[model_id])
@@ -253,7 +311,9 @@ def create_app(
         return ThreadOut.model_validate(thread)
 
     @router.post("/threads/{thread_id}/messages")
-    def send_message(thread_id: int, body: SendMessage, session: SessionDep) -> StreamingResponse:
+    def send_message(
+        thread_id: int, body: SendMessage, session: SessionDep, settings: SettingsDep
+    ) -> StreamingResponse:
         """Save the user message, then stream the assistant reply as SSE.
 
         Events: `user_message` (saved message), `delta` ({text}), then either
@@ -263,7 +323,7 @@ def create_app(
         thread = get_thread(session, thread_id)
         if thread.status != "open":
             raise HTTPException(409, f"thread is {thread.status}; reopen it to continue")
-        model_id = body.model or thread_model(thread)
+        model_id = body.model or thread_model(settings, thread)
         if model_id not in settings.models:
             raise HTTPException(422, f"unknown model {model_id!r}")
         replies = []
@@ -349,7 +409,7 @@ def create_app(
         )
 
     @router.post("/messages/{message_id}/revise")
-    def revise(message_id: int, session: SessionDep) -> StreamingResponse:
+    def revise(message_id: int, session: SessionDep, settings: SettingsDep) -> StreamingResponse:
         """Stream a rewrite of the reply that applies its merged side threads' notes.
 
         Events: `delta` ({text}), then `done` (RevisionProposal) or `error` ({error}).
@@ -361,7 +421,7 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         reason = revision_reason(pending_revision_notes(session, message))
-        model_id = thread_model(message.thread)
+        model_id = thread_model(settings, message.thread)
 
         async def events() -> AsyncIterator[str]:
             parts: list[str] = []
@@ -402,14 +462,16 @@ def create_app(
         return [VersionOut.model_validate(v) for v in message.versions]
 
     @router.get("/threads/{thread_id}/context-preview")
-    async def context_preview(thread_id: int, session: SessionDep) -> ContextPreview:
+    async def context_preview(
+        thread_id: int, session: SessionDep, settings: SettingsDep
+    ) -> ContextPreview:
         """Exactly what the next model call for this thread would send, plus its size."""
         thread = get_thread(session, thread_id)
         try:
             context = assemble_context(session, thread_id)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
-        model_id = thread_model(thread)
+        model_id = thread_model(settings, thread)
         try:
             tokens = await provider_for(settings.models[model_id]).count_tokens(context)
         except Exception:

@@ -1,5 +1,6 @@
 import { useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { ModelInfo } from '../lib/api'
+import { isSendKey } from '../lib/keys'
 
 interface Props {
   models: ModelInfo[]
@@ -12,10 +13,12 @@ interface Props {
   tray?: ReactNode // pending inline comments, shown above the text box
   canSendEmpty?: boolean // the tray alone makes a message
   blocked?: string // why sending is disabled right now, if it is
+  sendWithEnter?: boolean // Enter sends and Shift+Enter adds a line; otherwise Ctrl+Enter sends
 }
 
 export function Composer(props: Props) {
   const { models, model, onModelChange, streaming, onSend, onStop, status, tray, canSendEmpty, blocked } = props
+  const { sendWithEnter } = props
   const [text, setText] = useState('')
   const canSend = !streaming && !blocked && (canSendEmpty || !!text.trim())
 
@@ -25,9 +28,11 @@ export function Composer(props: Props) {
     setText('')
   }
 
-  // On the wrapper, so Ctrl+Enter also sends from the tray's comment boxes.
+  // On the wrapper, so the send key also works in the tray's comment boxes.
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    const { key, shiftKey, altKey, ctrlKey, metaKey } = e
+    const isComposing = e.nativeEvent.isComposing
+    if (isSendKey({ key, shiftKey, altKey, ctrlKey, metaKey, isComposing }, !!sendWithEnter)) {
       e.preventDefault()
       send()
     }
@@ -39,7 +44,11 @@ export function Composer(props: Props) {
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder={canSendEmpty ? 'Add a message to your comments (optional)' : 'Message (Ctrl+Enter to send)'}
+        placeholder={
+          canSendEmpty
+            ? 'Add a message to your comments (optional)'
+            : `Message (${sendWithEnter ? 'Enter to send, Shift+Enter for a new line' : 'Ctrl+Enter to send'})`
+        }
         rows={3}
         autoFocus
       />
