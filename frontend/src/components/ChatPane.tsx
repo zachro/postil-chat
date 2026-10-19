@@ -31,6 +31,7 @@ interface Props {
   closedNotice?: ReactNode // set when the thread takes no new messages; replaces the composer
   notesAfter?(messageId: number): MergeMarker[] // merged notes that take effect after a message
   messageFooter?(message: Message): ReactNode // e.g. version and revise actions
+  sendWithEnter?: boolean
   className?: string
 }
 
@@ -52,7 +53,7 @@ interface PendingReply {
 export function ChatPane(props: Props) {
   const { thread, createThread, models, model, onModelChange, onAppend, onReplyFinished } = props
   const { anchorsFor, onOpenThread, onReplyInline, header, emptyText, refreshKey } = props
-  const { closedNotice, notesAfter, messageFooter } = props
+  const { closedNotice, notesAfter, messageFooter, sendWithEnter } = props
   const messages = thread?.messages ?? []
   const [draft, setDraft] = useState<string | null>(null) // streaming reply, null when idle
   const [error, setError] = useState<string | null>(null)
@@ -282,6 +283,7 @@ export function ChatPane(props: Props) {
               />
             }
             canSendEmpty={comments.length > 0}
+            sendWithEnter={sendWithEnter}
             blocked={
               comments.some((c) => !c.text.trim()) ? 'Write each comment or remove it before sending' : undefined
             }

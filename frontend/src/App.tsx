@@ -6,6 +6,7 @@ import { MessageFooter } from './components/MessageFooter'
 import { RevisionDialog, type AnchorRef } from './components/RevisionDialog'
 import { VersionHistoryDialog } from './components/VersionHistoryDialog'
 import type { MessageAnchor } from './components/MessageView'
+import { SettingsDialog } from './components/SettingsDialog'
 import { SidePanel, SideThreadHeader } from './components/SidePanel'
 import { locateAnchor, type SourceAnchor } from './lib/anchors'
 import { shorten } from './lib/format'
@@ -13,16 +14,23 @@ import {
   createConversation,
   createSideThread,
   createVersion,
+  exportUrl,
   getConversation,
   getModels,
+  getSettings,
   listConversations,
   mergeThread,
+  resetSettings,
+  updateSettings,
   updateThread,
   type ContextMode,
   type Conversation,
   type ConversationSummary,
   type Message,
   type ModelsResponse,
+  type SearchHit,
+  type Settings,
+  type SettingsUpdate,
   type Thread,
 } from './lib/api'
 
@@ -49,6 +57,9 @@ const mainThreadOf = (c: Conversation | null) => c?.threads.find((t) => t.kind =
 
 export default function App() {
   const [models, setModels] = useState<ModelsResponse | null>(null)
+  const [settings, setSettings] = useState<Settings | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsSaves, setSettingsSaves] = useState(0) // budgets may have changed: refresh meters
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
   // null = a new chat that is saved on its first send (no empty conversations pile up)
   const [conversation, setConversation] = useState<Conversation | null>(null)
@@ -60,6 +71,8 @@ export default function App() {
   const [resolving, setResolving] = useState<number | null>(null) // thread id in the merge dialog
   const [revising, setRevising] = useState<number | null>(null) // message id in the revision dialog
   const [history, setHistory] = useState<number | null>(null) // message id in the history dialog
+  const focusMessage = useRef<number | null>(null) // a search hit to scroll to once it renders
+  const [focusRequest, setFocusRequest] = useState(0)
   const [error, setError] = useState<string | null>(null)
 
   const refreshList = useCallback(async () => {
@@ -86,13 +99,40 @@ export default function App() {
 
   useEffect(() => {
     async function load() {
-      setModels(await getModels())
+      const [m, s] = await Promise.all([getModels(), getSettings()])
+      setModels(m)
+      setSettings(s)
       const list = await listConversations()
       setConversations(list)
       if (list.length) await open(list[0].id)
     }
     load().catch((e) => setError(String(e)))
   }, [open])
+
+  /** Apply saved settings; the models list carries the default model, so refetch it too. */
+  async function applySettings(save: Promise<Settings>) {
+    setSettings(await save)
+    setModels(await getModels())
+    setSettingsSaves((n) => n + 1)
+  }
+
+  // Bring a search hit into view once its conversation (and side thread tab) has rendered.
+  useEffect(() => {
+    const article = focusMessage.current !== null && document.getElementById(`message-${focusMessage.current}`)
+    if (!article) return
+    focusMessage.current = null
+    article.scrollIntoView({ block: 'center' })
+    article.classList.remove('flash')
+    void article.offsetWidth // restart the animation
+    article.classList.add('flash')
+  }, [focusRequest, conversation, tabs])
+
+  async function openHit(hit: SearchHit) {
+    if (hit.conversation_id !== conversation?.id) await open(hit.conversation_id)
+    if (hit.thread_kind === 'side') openThread(hit.thread_id)
+    focusMessage.current = hit.message_id
+    setFocusRequest((n) => n + 1)
+  }
 
   // Esc closes the side panel (unless a dialog is open; it handles Esc itself).
   useEffect(() => {
@@ -172,8 +212,9 @@ export default function App() {
     )
   }
 
-  // Changes when any reply is revised, so token counts refresh without new messages.
-  const versionKey = threads.flatMap((t) => t.messages.map((m) => m.version)).join(',')
+  // Changes when any reply is revised or settings are saved, so token counts refresh
+  // without new messages.
+  const versionKey = `${threads.flatMap((t) => t.messages.map((m) => m.version)).join(',')}:${settingsSaves}`
 
   function resolveModel(thread: Thread | undefined): string {
     for (let t = thread; t; t = threadById(t.parent_thread_id)) {
@@ -306,6 +347,7 @@ export default function App() {
         anchorsFor={anchorsFor}
         notesAfter={notesAfter}
         messageFooter={messageFooter}
+        sendWithEnter={settings?.send_with_enter}
         onOpenThread={openThread}
         onReplyInline={
           thread && thread.status === 'open' && depth(thread) < MAX_DEPTH
@@ -349,13 +391,17 @@ export default function App() {
   if (!models) return null
 
   const mainThread = mainThreadOf(conversation) ?? null
+  // The list has the title set on the first send; the open conversation keeps its original.
+  const title = conversations.find((c) => c.id === conversation?.id)?.title ?? conversation?.title
   return (
     <div className={`layout${tabs.length ? ' with-panel' : ''}`}>
       <ConversationList
         conversations={conversations}
         activeId={conversation?.id ?? null}
         onSelect={(id) => open(id).catch((e) => setError(String(e)))}
+        onSelectHit={(hit) => openHit(hit).catch((e) => setError(String(e)))}
         onNew={startNew}
+        onSettings={() => setSettingsOpen(true)}
       />
       <ChatPane
         key={paneKey}
@@ -371,9 +417,24 @@ export default function App() {
         anchorsFor={anchorsFor}
         notesAfter={notesAfter}
         messageFooter={messageFooter}
+        sendWithEnter={settings?.send_with_enter}
         refreshKey={versionKey}
         onOpenThread={openThread}
         onReplyInline={mainThread ? (id, anchor) => replyInline(mainThread, id, anchor) : undefined}
+        header={
+          conversation && (
+            <header className="chat-header">
+              <h1>{title}</h1>
+              <span className="muted">Export</span>
+              <a href={exportUrl(conversation.id, 'md')} download>
+                Markdown
+              </a>
+              <a href={exportUrl(conversation.id, 'json')} download title="Every thread and message version">
+                JSON
+              </a>
+            </header>
+          )
+        }
       />
       {tabs.length > 0 && (
         <SidePanel
@@ -402,6 +463,14 @@ export default function App() {
             replaceMessage(await createVersion(revising, { content, reason, base_version: base }))
           }}
           onClose={() => setRevising(null)}
+        />
+      )}
+      {settingsOpen && settings && (
+        <SettingsDialog
+          settings={settings}
+          onSave={(update: SettingsUpdate) => applySettings(updateSettings(update))}
+          onReset={() => applySettings(resetSettings())}
+          onClose={() => setSettingsOpen(false)}
         />
       )}
       {history !== null && (
