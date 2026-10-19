@@ -190,3 +190,17 @@ class ContextPreview(BaseModel):
     token_count_estimated: bool
     token_budget: int
     over_budget: bool
+
+
+class SearchHit(BaseModel):
+    """A conversation title (message_id None) or message containing the query."""
+
+    conversation_id: int
+    conversation_title: str
+    thread_id: int  # the main thread for a title hit
+    thread_kind: str
+    message_id: int | None
+    role: str | None
+    snippet: str  # one line around the first match, "…" where trimmed
+    match_start: int  # the match's span within snippet
+    match_end: int

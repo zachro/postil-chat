@@ -905,3 +905,61 @@ button.link:hover {
 .chat-header a {
   color: var(--accent);
 }
+
+.sidebar-search {
+  margin: 0 12px 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+
+.search-results li.muted {
+  padding: 6px 8px;
+}
+
+.sidebar .search-results li button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  white-space: normal;
+}
+
+.search-hit-title {
+  font-size: 0.85em;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-hit-title .muted {
+  font-weight: normal;
+}
+
+.search-hit-snippet {
+  font-size: 0.85em;
+  color: var(--fg-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.search-hit-snippet mark {
+  background: var(--highlight);
+  color: var(--fg);
+}
+
+.message.flash {
+  animation: flash-message 1.5s ease-out;
+}
+
+@keyframes flash-message {
+  from {
+    background: var(--highlight);
+  }
+}

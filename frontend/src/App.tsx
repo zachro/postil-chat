@@ -24,6 +24,7 @@ import {
   type ConversationSummary,
   type Message,
   type ModelsResponse,
+  type SearchHit,
   type Thread,
 } from './lib/api'
 
@@ -61,6 +62,8 @@ export default function App() {
   const [resolving, setResolving] = useState<number | null>(null) // thread id in the merge dialog
   const [revising, setRevising] = useState<number | null>(null) // message id in the revision dialog
   const [history, setHistory] = useState<number | null>(null) // message id in the history dialog
+  const focusMessage = useRef<number | null>(null) // a search hit to scroll to once it renders
+  const [focusRequest, setFocusRequest] = useState(0)
   const [error, setError] = useState<string | null>(null)
 
   const refreshList = useCallback(async () => {
@@ -94,6 +97,24 @@ export default function App() {
     }
     load().catch((e) => setError(String(e)))
   }, [open])
+
+  // Bring a search hit into view once its conversation (and side thread tab) has rendered.
+  useEffect(() => {
+    const article = focusMessage.current !== null && document.getElementById(`message-${focusMessage.current}`)
+    if (!article) return
+    focusMessage.current = null
+    article.scrollIntoView({ block: 'center' })
+    article.classList.remove('flash')
+    void article.offsetWidth // restart the animation
+    article.classList.add('flash')
+  }, [focusRequest, conversation, tabs])
+
+  async function openHit(hit: SearchHit) {
+    if (hit.conversation_id !== conversation?.id) await open(hit.conversation_id)
+    if (hit.thread_kind === 'side') openThread(hit.thread_id)
+    focusMessage.current = hit.message_id
+    setFocusRequest((n) => n + 1)
+  }
 
   // Esc closes the side panel (unless a dialog is open; it handles Esc itself).
   useEffect(() => {
@@ -358,6 +379,7 @@ export default function App() {
         conversations={conversations}
         activeId={conversation?.id ?? null}
         onSelect={(id) => open(id).catch((e) => setError(String(e)))}
+        onSelectHit={(hit) => openHit(hit).catch((e) => setError(String(e)))}
         onNew={startNew}
       />
       <ChatPane

@@ -32,6 +32,7 @@ from app.schemas import (
     ModelsResponse,
     NoteProposal,
     RevisionProposal,
+    SearchHit,
     SendMessage,
     SideThreadCreate,
     ThreadOut,
@@ -39,6 +40,7 @@ from app.schemas import (
     VersionCreate,
     VersionOut,
 )
+from app.search import search
 
 log = logging.getLogger("postil")
 
@@ -150,6 +152,11 @@ def create_app(
         if conversation is None:
             raise HTTPException(404, "conversation not found")
         return ConversationOut.model_validate(conversation)
+
+    @router.get("/search")
+    def search_messages(q: str, session: SessionDep) -> list[SearchHit]:
+        """Conversations whose title or messages contain `q` (case-insensitive substring)."""
+        return search(session, q)
 
     @router.get("/conversations/{conversation_id}/export")
     def export_conversation(

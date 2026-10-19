@@ -101,6 +101,21 @@ export const getConversation = (id: number) => request<Conversation>(`/conversat
 export const createConversation = () =>
   request<Conversation>('/conversations', { method: 'POST', body: '{}' })
 
+/** A conversation title (message_id null) or message containing the search query. */
+export interface SearchHit {
+  conversation_id: number
+  conversation_title: string
+  thread_id: number
+  thread_kind: 'main' | 'side'
+  message_id: number | null
+  role: 'user' | 'assistant' | null
+  snippet: string // one line around the first match
+  match_start: number // the match's span within snippet
+  match_end: number
+}
+
+export const searchConversations = (q: string) => request<SearchHit[]>(`/search?q=${encodeURIComponent(q)}`)
+
 /** Download link for a conversation tree: Markdown to read, JSON (with every version) to keep. */
 export const exportUrl = (id: number, format: 'md' | 'json') => `/api/conversations/${id}/export?format=${format}`
 

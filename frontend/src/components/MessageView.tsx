@@ -72,7 +72,7 @@ export function MessageView(props: Props) {
   }
 
   return (
-    <article className={`message message-${role}`}>
+    <article className={`message message-${role}`} id={messageId ? `message-${messageId}` : undefined}>
       {role === 'assistant' ? (
         <div
           className={`markdown${hasSections ? ' has-sections' : ''}`}
