@@ -45,7 +45,7 @@ def test_search_matches_titles_first(client: TestClient) -> None:
 
 def test_snippets_are_trimmed_around_the_match(client: TestClient, provider: FakeProvider) -> None:
     conversation = new_conversation(client)
-    provider.deltas = ["a" * 200 + " needle\nin the " + "b" * 200]
+    provider.deltas = ["a" * 200 + "  \n  needle\n\n   in the " + "b" * 200]
     send(client, conversation["threads"][0]["id"], "Find it")
 
     (hit,) = search(client, "NEEDLE")
@@ -53,7 +53,8 @@ def test_snippets_are_trimmed_around_the_match(client: TestClient, provider: Fak
     snippet = hit["snippet"]
     assert snippet.startswith("…") and snippet.endswith("…")
     assert snippet[hit["match_start"] : hit["match_end"]] == "needle"
-    assert "\n" not in snippet
+    assert "\n" not in snippet and "  " not in snippet  # whitespace runs collapse to one space
+    assert " needle in the b" in snippet
     assert len(snippet) < 200
 
 

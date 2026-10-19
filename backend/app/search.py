@@ -64,11 +64,18 @@ def _hit(
 
 
 def snippet_around(text: str, query: str) -> tuple[str, int, int]:
-    """One line of `text` around the first case-insensitive `query`, and its span in it."""
+    """One line of `text` around the first case-insensitive `query`, and its span in it.
+
+    Runs of whitespace (newlines, code indentation) collapse to one space.
+    """
     found = text.lower().find(query.lower())
     start, end = (found, found + len(query)) if found >= 0 else (0, 0)
     a, b = max(0, start - SNIPPET_BEFORE), min(len(text), end + SNIPPET_AFTER)
-    lead = "…" if a > 0 else ""
-    snippet = lead + re.sub(r"\s", " ", text[a:b]) + ("…" if b < len(text) else "")
-    shift = len(lead) - a
-    return snippet, start + shift, end + shift
+    before = ("…" if a > 0 else "") + _collapse(text[a:start])
+    match = _collapse(text[start:end])
+    after = _collapse(text[end:b]) + ("…" if b < len(text) else "")
+    return before + match + after, len(before), len(before) + len(match)
+
+
+def _collapse(text: str) -> str:
+    return re.sub(r"\s+", " ", text)
